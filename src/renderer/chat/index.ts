@@ -14,10 +14,11 @@ function mdToHtml(md: string): string {
     return `\x00${blocks.length - 1}\x00`;
   });
   text = escapeHtml(text);
-  // markdown links first, then bare URLs (skip URLs already inside an href attribute)
+  // images first, then markdown links (negative lookbehind so ![...]( ) isn't eaten), then bare URLs
   text = text
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" data-link>$1</a>')
-    .replace(/(?<!href=")(https?:\/\/[^\s<)。，、；：！？」』]+)/g, (m) => {
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img class="md-img" src="$2" alt="$1" loading="lazy" />')
+    .replace(/(?<!!)\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" data-link>$1</a>')
+    .replace(/(?<!href=")(?<!src=")(https?:\/\/[^\s<)。，、；：！？」』]+)/g, (m) => {
       const trailing = m.match(/[.,;:!?]+$/)?.[0] ?? '';
       const url = m.slice(0, m.length - trailing.length);
       return `<a href="${url}" data-link>${url}</a>${trailing}`;
@@ -105,17 +106,32 @@ const messagesEl = $('messages');
 const inputEl = $('input') as HTMLTextAreaElement;
 const sendBtn = $('btn-send') as HTMLButtonElement;
 
-function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+// ---------- scroll: stick to bottom unless the user scrolled up ----------
+let stickToBottom = true;
+messagesEl.addEventListener('scroll', () => {
+  stickToBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
+});
+
+function scrollToBottom(force = false) {
+  if (force || stickToBottom) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 }
 
-// links inside agent messages open in the system browser
+// links inside agent messages open in the system browser; images open a fullscreen preview
 messagesEl.addEventListener('click', (e) => {
   const a = (e.target as HTMLElement).closest('a[data-link]');
-  if (!a) return;
-  e.preventDefault();
-  const href = a.getAttribute('href');
-  if (href) window.kimi.openExternal(href);
+  if (a) {
+    e.preventDefault();
+    const href = a.getAttribute('href');
+    if (href) window.kimi.openExternal(href);
+    return;
+  }
+  const img = (e.target as HTMLElement).closest('img.md-img, img.msg-img') as HTMLImageElement | null;
+  if (img?.src) {
+    e.preventDefault();
+    window.kimi.showImagePreview(img.src);
+  }
 });
 
 // ---------- context menu: copy / quote ----------
@@ -389,6 +405,7 @@ function renderQueueBar() {
 async function doSend(msg: QueuedMessage) {
   const session = await ensureSession();
   addMessage('user', msg.text, msg.image, msg.quote);
+  scrollToBottom(true); // user's own message always snaps to bottom
   streaming = true;
   updateSendBtn();
   currentAgentEl = null;
@@ -559,6 +576,7 @@ async function switchSession(sessionId: string) {
   for (const item of history) {
     addMessage(item.role, item.text);
   }
+  scrollToBottom(true);
   $('session-title').textContent = currentSession.title || '会话';
   document.querySelector('.panel:not(.hidden)')?.classList.add('hidden');
   inputEl.focus();

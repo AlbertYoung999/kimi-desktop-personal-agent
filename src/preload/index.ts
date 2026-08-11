@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld('kimi', {
   setChatPinned: (pinned: boolean): void => void ipcRenderer.send(IPC.setChatPinned, pinned),
   getChatPinned: (): Promise<boolean> => ipcRenderer.invoke(IPC.getChatPinned),
   openExternal: (url: string): void => void ipcRenderer.send(IPC.openExternal, url),
+  showImagePreview: (src: string): void => void ipcRenderer.send(IPC.showImagePreview, src),
+  getPreviewImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.getPreviewImage),
+  closePreview: (): void => void ipcRenderer.send(IPC.closePreview),
 
   onCursor: on<CursorPoint>(IPC.evCursor),
   onBallState: on<BallState>(IPC.evBallState),

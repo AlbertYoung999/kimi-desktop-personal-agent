@@ -105,6 +105,9 @@ export const IPC = {
   setChatPinned: 'window:set-chat-pinned',
   getChatPinned: 'window:get-chat-pinned',
   openExternal: 'shell:open-external',
+  showImagePreview: 'preview:show',
+  getPreviewImage: 'preview:get',
+  closePreview: 'preview:close',
   // events (main -> renderer)
   evChunk: 'acp:chunk',
   evToolCall: 'acp:tool-call',

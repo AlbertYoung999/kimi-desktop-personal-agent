@@ -224,7 +224,16 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
 }
-.msg .msg-img { max-width: 100%; border-radius: var(--r-sm); display: block; margin-bottom: 6px; }
+.msg .msg-img { max-width: 100%; border-radius: var(--r-sm); display: block; margin-bottom: 6px; cursor: zoom-in; }
+.msg .md-img {
+  max-width: 100%;
+  border-radius: var(--r-sm);
+  display: block;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: zoom-in;
+}
 .msg pre {
   background: var(--code-bg);
   padding: 9px 11px;

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    #backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.82);
+      display: flex; align-items: center; justify-content: center;
+      cursor: zoom-out;
+      animation: fadeIn 150ms ease-out;
+    }
+    #img {
+      max-width: 90%; max-height: 88%;
+      border-radius: 8px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+      animation: zoomIn 180ms cubic-bezier(0.2, 0, 0, 1);
+    }
+    #hint {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.55); font: 12px -apple-system, "PingFang SC", sans-serif;
+      user-select: none;
+    }
+    @keyframes fadeIn { from { opacity: 0; } }
+    @keyframes zoomIn { from { transform: scale(0.92); opacity: 0.4; } }
+  </style>
+</head>
+<body>
+  <div id="backdrop">
+    <img id="img" alt="preview" />
+    <div id="hint">点击任意处或按 Esc 关闭</div>
+  </div>
+  <script>
+    window.kimi.getPreviewImage().then((src) => {
+      if (src) document.getElementById('img').src = src;
+      else window.kimi.closePreview();
+    });
+    document.getElementById('backdrop').addEventListener('click', () => window.kimi.closePreview());
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') window.kimi.closePreview();
+    });
+  </script>
+</body>
+</html>

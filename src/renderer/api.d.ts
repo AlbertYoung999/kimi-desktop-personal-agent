@@ -42,6 +42,9 @@ export interface KimiApi {
   setChatPinned(pinned: boolean): void;
   getChatPinned(): Promise<boolean>;
   openExternal(url: string): void;
+  showImagePreview(src: string): void;
+  getPreviewImage(): Promise<string | null>;
+  closePreview(): void;
 
   onCursor(cb: (p: CursorPoint) => void): void;
   onBallState(cb: (s: BallState) => void): void;

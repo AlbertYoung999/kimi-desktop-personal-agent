@@ -142,6 +142,55 @@ export function moveBallTo(x: number, y: number): void {
   }
 }
 
+// ---------- fullscreen image preview ----------
+
+let previewWin: BrowserWindow | null = null;
+let pendingPreviewSrc: string | null = null;
+
+export function showImagePreview(src: string): void {
+  if (previewWin && !previewWin.isDestroyed()) {
+    previewWin.close();
+  }
+  pendingPreviewSrc = src;
+  const anchor = chatWin && !chatWin.isDestroyed() ? chatWin.getBounds() : { x: 0, y: 0, width: 0, height: 0 };
+  const display = screen.getDisplayNearestPoint({ x: anchor.x + anchor.width / 2, y: anchor.y + anchor.height / 2 });
+  previewWin = new BrowserWindow({
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+  previewWin.setAlwaysOnTop(true, 'screen-saver');
+  previewWin.loadFile(path.join(rendererDir(), 'preview', 'index.html'));
+  previewWin.on('closed', () => {
+    previewWin = null;
+    pendingPreviewSrc = null;
+  });
+}
+
+export function getPreviewImage(): string | null {
+  return pendingPreviewSrc;
+}
+
+export function closeImagePreview(): void {
+  previewWin?.close();
+}
+
 export function disposeWindows(): void {
   if (cursorTimer) clearInterval(cursorTimer);
 }

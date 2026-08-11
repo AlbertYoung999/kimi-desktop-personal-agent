@@ -9,17 +9,20 @@ import type { AppSettings, PromptImage, VaultEntry } from '../shared/types.js';
 import { ACPManager } from './acp.js';
 import { deleteMode, findMode, getSettings, listModes, saveMode, saveSettings } from './store.js';
 import {
+  closeImagePreview,
   createBallWindow,
   createChatWindow,
   disposeWindows,
   getBallWindow,
   getChatPinned,
   getChatWindow,
+  getPreviewImage,
   hideChat,
   moveBallTo,
   setBallState,
   setChatPinned,
   showChat,
+  showImagePreview,
   toggleChat,
 } from './windows.js';
 
@@ -131,6 +134,13 @@ function registerIpc(): void {
   ipcMain.on(IPC.openExternal, (_e, url: string) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) void shell.openExternal(url);
   });
+  ipcMain.on(IPC.showImagePreview, (_e, src: string) => {
+    if (typeof src === 'string' && (src.startsWith('data:image/') || /^https?:\/\//i.test(src))) {
+      showImagePreview(src);
+    }
+  });
+  ipcMain.handle(IPC.getPreviewImage, () => getPreviewImage());
+  ipcMain.on(IPC.closePreview, () => closeImagePreview());
 }
 
 // ---------- lifecycle ----------
