@@ -4,6 +4,10 @@
   "description": "Kimi desktop floating assistant (ACP client for kimi-code CLI)",
   "license": "MIT",
   "author": "AlbertYang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlbertYoung999/kimi-float.git"
+  },
   "keywords": ["kimi", "acp", "electron", "desktop", "assistant"],
   "main": "dist/main/index.js",
   "scripts": {
