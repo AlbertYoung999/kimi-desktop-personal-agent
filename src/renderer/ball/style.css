@@ -1,0 +1,86 @@
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#ball {
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  /* matches the reference avatar: bright azure core, lighter upper-right, deeper edge */
+  background: radial-gradient(circle at 62% 28%, #6db6ff 0%, #2f96fa 34%, #0080f7 62%, #0063d6 88%, #0052b8 100%);
+  box-shadow: 0 3px 10px rgba(0, 90, 200, 0.35);
+  cursor: pointer;
+  transition: transform 0.25s ease;
+}
+
+#ball:hover {
+  transform: scale(1.06);
+}
+
+/* soft gloss on the dome */
+#gloss {
+  position: absolute;
+  left: 18%;
+  top: 8%;
+  width: 46%;
+  height: 26%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 70%);
+  pointer-events: none;
+}
+
+#face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 30%; /* eyes sit in the upper-middle, like the reference */
+  gap: 9%;
+  transition: transform 0.6s ease;
+}
+
+/* two slim white ovals — no pupils */
+.eye {
+  width: 11%;
+  height: 24%;
+  background: #fff;
+  border-radius: 50% / 50%;
+  box-shadow: 0 0 3px rgba(255, 255, 255, 0.6);
+  transition: transform 0.08s linear;
+}
+
+/* blink: JS toggles .blinking on #face */
+#face.blinking .eye {
+  transform: scaleY(0.1) !important;
+}
+
+/* idle head tilt */
+#face.tilt-left { transform: rotate(-10deg) translateX(-4%); }
+#face.tilt-right { transform: rotate(10deg) translateX(4%); }
+
+/* thinking: slow breathing pulse */
+#ball.state-thinking {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.07); }
+}
+
+/* streaming: gentle bob */
+#ball.state-streaming {
+  animation: bob 0.9s ease-in-out infinite;
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}

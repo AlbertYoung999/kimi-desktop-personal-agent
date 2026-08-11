@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+
+# 内部工作文档与私人素材，不进仓库
+prd.md
+design.md
+image.png
+assets/

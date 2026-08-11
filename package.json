@@ -1,0 +1,27 @@
+{
+  "name": "kimi-float",
+  "version": "0.1.0",
+  "description": "Kimi desktop floating assistant (ACP client for kimi-code CLI)",
+  "license": "MIT",
+  "author": "AlbertYang",
+  "keywords": ["kimi", "acp", "electron", "desktop", "assistant"],
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "esbuild src/renderer/ball/index.ts --bundle --outfile=dist/renderer/ball/index.js --format=iife && esbuild src/renderer/chat/index.ts --bundle --outfile=dist/renderer/chat/index.js --format=iife && cp src/renderer/ball/index.html src/renderer/ball/style.css dist/renderer/ball/ && cp src/renderer/chat/index.html src/renderer/chat/style.css dist/renderer/chat/",
+    "watch": "concurrently \"tsc -p tsconfig.main.json -w\" \"npm run build:renderer -- --watch\"",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.0.0",
+    "electron": "^37.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.23.0"
+  }
+}
