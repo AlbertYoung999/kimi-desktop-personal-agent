@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+    #pill {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: rgba(13, 17, 23, 0.92);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      border-radius: 999px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 16px rgba(0, 240, 255, 0.12);
+      cursor: grab;
+      font-family: "SF Mono", Menlo, monospace;
+      color: #dde3ea;
+      padding: 0 16px;
+      animation: pillIn 250ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes pillIn { from { transform: translateY(-8px); opacity: 0; } }
+    #dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #00f0ff;
+      box-shadow: 0 0 8px #00f0ff;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    #pill.paused #dot { background: #ffaa00; box-shadow: 0 0 8px #ffaa00; animation: none; }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    #time { font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: 1px; color: #00f0ff; }
+    #pill.paused #time { color: #ffaa00; }
+    #mode { font-size: 9px; letter-spacing: 1.5px; color: #7d8590; text-transform: uppercase; }
+    #task {
+      font-size: 11px; color: #7d8590;
+      max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <div id="pill" title="拖拽移动 · 双击打开工作台">
+    <div id="dot"></div>
+    <span id="time">--:--</span>
+    <span id="mode"></span>
+    <span id="task"></span>
+  </div>
+  <script>
+    const pill = document.getElementById('pill');
+    window.kimi.onFocusStatus((s) => {
+      const total = Math.max(0, Math.round(s.remainingMs / 1000));
+      const mm = String(Math.floor(total / 60)).padStart(2, '0');
+      const ss = String(total % 60).padStart(2, '0');
+      document.getElementById('time').textContent = `${mm}:${ss}`;
+      document.getElementById('mode').textContent = s.mode;
+      document.getElementById('task').textContent = s.task || '';
+      pill.classList.toggle('paused', !!s.paused);
+    });
+
+    // left-drag to move; double-click opens the workbench
+    let dragStart = null;
+    let dragged = false;
+    pill.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      dragStart = { sx: e.screenX, sy: e.screenY, wx: window.screenX, wy: window.screenY };
+      dragged = false;
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragStart) return;
+      const dx = e.screenX - dragStart.sx;
+      const dy = e.screenY - dragStart.sy;
+      if (!dragged && Math.hypot(dx, dy) > 4) dragged = true;
+      if (dragged) window.kimi.movePill(dragStart.wx + dx, dragStart.wy + dy);
+    });
+    window.addEventListener('mouseup', () => {
+      dragStart = null;
+      // dragged flag stays true briefly so the trailing click doesn't fire
+      if (dragged) setTimeout(() => (dragged = false), 150);
+    });
+    pill.addEventListener('dblclick', () => {
+      if (!dragged) window.kimi.toggleWorkbench();
+    });
+  </script>
+</body>
+</html>

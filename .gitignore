@@ -4,6 +4,10 @@ dist/
 
 # 内部工作文档与私人素材，不进仓库
 prd.md
+prd/
 design.md
+design-workbench.md
+design-evolve.md
+changelog-0816.md
 image.png
 assets/

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="430" viewBox="0 0 780 430" font-family="-apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif">
+  <defs>
+    <marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#8a8f98"/>
+    </marker>
+  </defs>
+
+  <!-- home window frame -->
+  <rect x="16" y="14" width="748" height="300" rx="14" fill="#0d1512" stroke="#2a3a33"/>
+  <text x="40" y="40" font-size="12" font-weight="600" fill="#00e5a0" font-family="SF Mono, Menlo, monospace">KIMI · CORE LISTENING — voice-first 主页（启动入口）</text>
+
+  <!-- left rail -->
+  <rect x="32" y="56" width="170" height="200" rx="8" fill="#0a100d" stroke="#23403a"/>
+  <text x="44" y="78" font-size="10.5" fill="#00e5a0" font-family="SF Mono, Menlo, monospace">// SYSTEM</text>
+  <text x="44" y="98" font-size="10" fill="#7dd7b8">CPU / RAM / DISK</text>
+  <text x="44" y="116" font-size="10" fill="#7dd7b8">网络 sparkline · 电池</text>
+  <text x="44" y="134" font-size="10" fill="#7dd7b8">Wi-Fi · GPU · Top 进程</text>
+  <text x="44" y="152" font-size="10" fill="#7dd7b8">⚙ 指标开关浮层</text>
+  <line x1="44" y1="166" x2="190" y2="166" stroke="#23403a"/>
+  <text x="44" y="186" font-size="10.5" fill="#00e5a0" font-family="SF Mono, Menlo, monospace">// MODULES</text>
+  <text x="44" y="204" font-size="10" fill="#7dd7b8">BRAIN kimi-acp ●</text>
+  <text x="44" y="222" font-size="10" fill="#7dd7b8">VOICE daniel-gb ●</text>
+  <text x="44" y="240" font-size="10" fill="#5a7a6e">STT whisper ○ 待接入</text>
+
+  <!-- orb -->
+  <circle cx="390" cy="156" r="58" fill="none" stroke="#00e5a0" stroke-width="2" opacity="0.85"/>
+  <circle cx="390" cy="156" r="34" fill="#00e5a0" opacity="0.15"/>
+  <circle cx="390" cy="156" r="18" fill="#00e5a0" opacity="0.3"/>
+  <text x="390" y="246" text-anchor="middle" font-size="10.5" fill="#7dd7b8" font-family="SF Mono, Menlo, monospace">orb · READY / THINKING / SPEAKING</text>
+
+  <!-- right log -->
+  <rect x="548" y="56" width="200" height="200" rx="8" fill="#0a100d" stroke="#23403a"/>
+  <text x="560" y="78" font-size="10.5" fill="#00e5a0" font-family="SF Mono, Menlo, monospace">// EVENT LOG</text>
+  <text x="560" y="98" font-size="10" fill="#7dd7b8">[10:01] YOU › 你好</text>
+  <text x="560" y="116" font-size="10" fill="#b8f0dc">[10:01] KIMI › 你好，我是…</text>
+  <text x="560" y="134" font-size="10" fill="#5a7a6e">（流式追加 · 独立 ACP 会话）</text>
+
+  <!-- input bar -->
+  <rect x="32" y="268" width="716" height="30" rx="8" fill="#0a100d" stroke="#23403a"/>
+  <text x="48" y="288" font-size="10.5" fill="#5a7a6e" font-family="SF Mono, Menlo, monospace">› Message KIMI…        [MIC 待接入]  [SEND]</text>
+
+  <!-- dashboard link -->
+  <rect x="604" y="322" width="144" height="30" rx="8" fill="none" stroke="#00e5a0"/>
+  <text x="676" y="341" text-anchor="middle" font-size="10.5" fill="#00e5a0" font-family="SF Mono, Menlo, monospace">DASHBOARD → 工作台</text>
+
+  <!-- below: pipeline -->
+  <rect x="32" y="352" width="180" height="56" rx="10" fill="#eef9f1" stroke="#bfe6cb"/>
+  <text x="122" y="374" text-anchor="middle" font-size="11" font-weight="600" fill="#1c1e21">系统指标采集</text>
+  <text x="122" y="390" text-anchor="middle" font-size="9.5" fill="#4b5058">os / netstat / pmset · 2s 轮询</text>
+
+  <rect x="252" y="352" width="200" height="56" rx="10" fill="#fff6ec" stroke="#f2d9b8"/>
+  <text x="352" y="374" text-anchor="middle" font-size="11" font-weight="600" fill="#1c1e21">kimi（home ACP 会话）</text>
+  <text x="352" y="390" text-anchor="middle" font-size="9.5" fill="#4b5058">输入 → 流式回复 → EVENT LOG</text>
+
+  <rect x="492" y="352" width="150" height="56" rx="10" fill="#f0ebff" stroke="#cdbcf0"/>
+  <text x="567" y="374" text-anchor="middle" font-size="11" font-weight="600" fill="#1c1e21">TTS 语音播报</text>
+  <text x="567" y="390" text-anchor="middle" font-size="9.5" fill="#4b5058">macOS say · Daniel 英音</text>
+
+  <rect x="662" y="352" width="86" height="56" rx="10" fill="none" stroke="#8a8f98" stroke-dasharray="4 3"/>
+  <text x="705" y="374" text-anchor="middle" font-size="11" font-weight="600" fill="#4b5058">Whisper</text>
+  <text x="705" y="390" text-anchor="middle" font-size="9.5" fill="#4b5058">STT 待接入</text>
+
+  <!-- arrows -->
+  <line x1="117" y1="256" x2="117" y2="352" stroke="#8a8f98" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="390" y1="298" x2="352" y2="352" stroke="#8a8f98" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="452" y1="380" x2="492" y2="380" stroke="#8a8f98" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="567" y1="352" x2="440" y2="210" stroke="#8a8f98" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+  <text x="540" y="290" font-size="9.5" fill="#8a8f98">播报状态驱动 orb</text>
+</svg>

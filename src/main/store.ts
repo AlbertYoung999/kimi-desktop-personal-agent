@@ -57,6 +57,10 @@ export function upsertSession(meta: SessionMeta): void {
   writeJson('sessions.json', list.slice(0, 200));
 }
 
+export function removeSessionFromIndex(sessionId: string): void {
+  writeJson('sessions.json', getSessionIndex().filter((s) => s.sessionId !== sessionId));
+}
+
 // ---------- preset modes ----------
 
 interface ModesFile {

@@ -7,28 +7,100 @@ import { promisify } from 'node:util';
 import { IPC } from '../shared/types.js';
 import type { AppSettings, PromptImage, VaultEntry } from '../shared/types.js';
 import { ACPManager } from './acp.js';
+import { readEvolveLog } from './evolve.js';
+import { startWorkbenchMcp } from './mcpserver.js';
+import { sampleSysStats } from './sysstats.js';
+import { speak, stopSpeaking } from './tts.js';
+import { deleteRadar, listRadars, runRadarNow, saveRadar, startRadarSchedulers, stopRadarSchedulers } from './radar.js';
 import { deleteMode, findMode, getSettings, listModes, saveMode, saveSettings } from './store.js';
+import {
+  appendFocusRecord,
+  deleteEngine,
+  deleteProject,
+  deleteTask,
+  addLibraryItem,
+  deleteLibraryItem,
+  getLayout,
+  listEngines,
+  listFocusRecords,
+  listLibrary,
+  listProjects,
+  listTasks,
+  readAgents,
+  saveEngine,
+  saveLayout,
+  saveProject,
+  saveTask,
+  writeAgents,
+} from './workbench.js';
 import {
   closeImagePreview,
   createBallWindow,
   createChatWindow,
+  createHomeWindow,
+  createWorkbenchWindow,
   disposeWindows,
   getBallWindow,
   getChatPinned,
   getChatWindow,
+  getHomeWindow,
   getPreviewImage,
+  getWorkbenchWindow,
   hideChat,
   moveBallTo,
+  movePillTo,
+  pushFocusStatus,
   setBallState,
   setChatPinned,
   showChat,
   showImagePreview,
   toggleChat,
+  toggleHome,
+  toggleWorkbench,
 } from './windows.js';
 
 const execFileAsync = promisify(execFile);
 
-const acpManager = new ACPManager(() => getChatWindow()?.webContents ?? null);
+const acpManager = new ACPManager(
+  () => getChatWindow()?.webContents ?? null,
+  () => getWorkbenchWindow()?.webContents ?? null,
+  () => getHomeWindow()?.webContents ?? null,
+);
+
+// ---------- sys stats polling (home page left rail) ----------
+
+let statsTimer: NodeJS.Timeout | null = null;
+
+function startStatsLoop(): void {
+  if (statsTimer) return;
+  statsTimer = setInterval(() => {
+    const wc = getHomeWindow()?.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    void sampleSysStats().then((stats) => wc.send(IPC.evSysStats, stats));
+  }, 2000);
+}
+
+// ---------- workbench MCP action relay ----------
+
+const pendingWbActions = new Map<string, (message: string) => void>();
+
+function forwardToRenderer(action: string, params: Record<string, unknown>): Promise<string> {
+  const wc = getWorkbenchWindow()?.webContents;
+  if (!wc || wc.isDestroyed()) return Promise.resolve('✗ 工作台窗口不可用');
+  const requestId = `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return new Promise((resolve) => {
+    pendingWbActions.set(requestId, resolve);
+    wc.send(IPC.evWbAction, { requestId, action, params });
+    setTimeout(() => {
+      if (pendingWbActions.delete(requestId)) resolve('✗ 工作台执行超时');
+    }, 8000);
+  });
+}
+
+function notifyWbRefresh(kind: 'tasks' | 'radars'): void {
+  const wc = getWorkbenchWindow()?.webContents;
+  if (wc && !wc.isDestroyed()) wc.send(IPC.evWbRefresh, { kind });
+}
 
 // ---------- capture (macOS native region screenshot) ----------
 
@@ -128,6 +200,63 @@ function registerIpc(): void {
   ipcMain.on(IPC.toggleChat, () => toggleChat());
   ipcMain.on(IPC.hideChat, () => hideChat());
   ipcMain.on(IPC.setBallState, (_e, state) => setBallState(state));
+
+  // ---- workbench ----
+  ipcMain.on(IPC.toggleWorkbench, () => toggleWorkbench());
+  ipcMain.handle(IPC.wbGetLayout, () => getLayout());
+  ipcMain.handle(IPC.wbSaveLayout, (_e, layout) => saveLayout(layout));
+  ipcMain.handle(IPC.wbTasksList, () => listTasks());
+  ipcMain.handle(IPC.wbTaskSave, (_e, task) => saveTask(task));
+  ipcMain.handle(IPC.wbTaskDelete, (_e, id: string) => deleteTask(id));
+  ipcMain.handle(IPC.wbProjectsList, () => listProjects());
+  ipcMain.handle(IPC.wbProjectSave, (_e, project) => saveProject(project));
+  ipcMain.handle(IPC.wbProjectDelete, (_e, id: string) => deleteProject(id));
+  ipcMain.handle(IPC.wbTaskStartSession, async (_e, payload: string) => acpManager.startTaskSession(payload));
+  ipcMain.handle(IPC.wbOpenSessionInChat, (_e, sessionId: string) => {
+    showChat();
+    getChatWindow()?.webContents.send(IPC.loadSessionInChat, sessionId);
+  });
+  ipcMain.handle(IPC.wbGetEngines, () => listEngines());
+  ipcMain.handle(IPC.wbSaveEngine, (_e, engine) => saveEngine(engine));
+  ipcMain.handle(IPC.wbDeleteEngine, (_e, id: string) => deleteEngine(id));
+  ipcMain.handle(IPC.wbSearchLaunch, (_e, urls: string[]) => {
+    for (const url of urls.slice(0, 8)) {
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    }
+  });
+  ipcMain.handle(IPC.wbFocusLog, (_e, rec) => appendFocusRecord(rec));
+  ipcMain.handle(IPC.wbFocusHistory, () => listFocusRecords());
+  ipcMain.handle(IPC.wbAgentsRead, () => readAgents(getSettings().workspaceDir));
+  ipcMain.handle(IPC.wbAgentsWrite, (_e, content: string) => writeAgents(getSettings().workspaceDir, content));
+  ipcMain.handle(IPC.wbAcpAsk, (_e, text: string) => acpManager.workbenchAsk(text));
+
+  // workbench MCP action relay: main -> renderer -> result back
+  ipcMain.on(IPC.wbActionResult, (_e, payload: { requestId: string; message: string }) => {
+    pendingWbActions.get(payload.requestId)?.(payload.message);
+    pendingWbActions.delete(payload.requestId);
+  });
+  ipcMain.handle(IPC.wbForgeGenerate, (_e, prompt: string) => acpManager.askOnce(prompt, 300_000));
+  ipcMain.handle(IPC.wbLibraryList, () => listLibrary());
+  ipcMain.handle(IPC.wbLibraryAdd, (_e, item) => addLibraryItem(item));
+  ipcMain.handle(IPC.wbLibraryDelete, (_e, id: string) => deleteLibraryItem(id));
+
+  // ---- home (voice-first entry) ----
+  ipcMain.handle(IPC.homeAsk, (_e, text: string) => acpManager.homeAsk(text));
+  ipcMain.on(IPC.toggleHome, () => toggleHome());
+  ipcMain.handle(IPC.ttsSpeak, (_e, text: string) => speak(text));
+  ipcMain.on(IPC.ttsStop, () => stopSpeaking());
+  ipcMain.handle(IPC.wbEvolveLog, () => readEvolveLog(50));
+  ipcMain.on(IPC.focusStatus, (_e, status) => pushFocusStatus(status));
+  ipcMain.on(IPC.pillMove, (_e, pos: { x: number; y: number }) => movePillTo(pos.x, pos.y));
+  ipcMain.on(IPC.setSessionAllow, (_e, p: { sessionId: string; allowed: boolean }) =>
+    acpManager.setSessionAllow(p.sessionId, p.allowed),
+  );
+
+  // ---- info radar ----
+  ipcMain.handle(IPC.wbRadarList, () => listRadars());
+  ipcMain.handle(IPC.wbRadarSave, (_e, radar) => saveRadar(radar));
+  ipcMain.handle(IPC.wbRadarDelete, (_e, id: string) => deleteRadar(id));
+  ipcMain.handle(IPC.wbRadarRunNow, (_e, id: string) => runRadarNow(id));
   ipcMain.on(IPC.ballMove, (_e, pos: { x: number; y: number }) => moveBallTo(pos.x, pos.y));
   ipcMain.on(IPC.setChatPinned, (_e, pinned: boolean) => setChatPinned(pinned));
   ipcMain.handle(IPC.getChatPinned, () => getChatPinned());
@@ -149,11 +278,53 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     app.dock?.hide(); // menu-bar-style accessory app: no dock icon
     registerIpc();
     createBallWindow();
     createChatWindow();
+    createWorkbenchWindow();
+    createHomeWindow();
+    startStatsLoop();
+
+    // workbench MCP server (self-evolution plane, design-evolve.md E1)
+    const mcpUrl = await startWorkbenchMcp({
+      forwardToRenderer,
+      openExternal: (url) => void shell.openExternal(url),
+      notifyRefresh: notifyWbRefresh,
+      askOnce: (prompt, timeoutMs) => acpManager.askOnce(prompt, timeoutMs),
+      notifyArtifactUpdated: (item) => {
+        const wc = getWorkbenchWindow()?.webContents;
+        if (wc && !wc.isDestroyed()) wc.send(IPC.evArtifactUpdated, item);
+      },
+      notifyUser: (kind, message) => {
+        const wc = getWorkbenchWindow()?.webContents;
+        if (wc && !wc.isDestroyed()) wc.send(IPC.evWbNotify, { kind, message });
+      },
+      notifyArtifactProgress: (p) => {
+        const wc = getWorkbenchWindow()?.webContents;
+        if (wc && !wc.isDestroyed()) wc.send(IPC.evArtifactProgress, p);
+      },
+      askOnceRepo: (prompt, timeoutMs) => acpManager.askOnce(prompt, timeoutMs ?? 300_000, app.getAppPath()),
+      repoRoot: () => app.getAppPath(),
+      rebuildWorkbench: async () => {
+        await execFileAsync(
+          path.join(app.getAppPath(), 'node_modules', '.bin', 'esbuild'),
+          ['src/renderer/workbench/index.ts', '--bundle', '--outfile=dist/renderer/workbench/index.js', '--format=iife'],
+          { cwd: app.getAppPath(), timeout: 60_000 },
+        );
+        getWorkbenchWindow()?.webContents.reload();
+      },
+    });
+    acpManager.setWorkbenchMcpUrl(mcpUrl);
+
+    // info radar: scheduled fetch + AI structuring, pushes evRadarItems to the workbench
+    startRadarSchedulers({
+      askOnce: (text) => acpManager.askOnce(text),
+      push: (radarId, newCount) => {
+        getWorkbenchWindow()?.webContents.send(IPC.evRadarItems, { radarId, newCount });
+      },
+    });
 
     globalShortcut.register('CommandOrControl+Shift+K', async () => {
       showChat();
@@ -161,14 +332,19 @@ if (!gotLock) {
       if (img) getChatWindow()?.webContents.send(IPC.evImagePasted, img);
     });
 
+    globalShortcut.register('CommandOrControl+Shift+J', () => toggleHome());
+
     app.on('activate', () => {
       if (!getBallWindow()) createBallWindow();
       if (!getChatWindow()) createChatWindow();
+      if (!getWorkbenchWindow()) createWorkbenchWindow();
+      if (!getHomeWindow()) createHomeWindow();
     });
   });
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    stopRadarSchedulers();
     disposeWindows();
     void acpManager.dispose();
   });

@@ -142,6 +142,162 @@ export function moveBallTo(x: number, y: number): void {
   }
 }
 
+// ---------- home window (voice-first entry) ----------
+
+let homeWin: BrowserWindow | null = null;
+
+export function getHomeWindow(): BrowserWindow | null {
+  return homeWin;
+}
+
+export function createHomeWindow(): BrowserWindow {
+  homeWin = new BrowserWindow({
+    width: 1120,
+    height: 720,
+    minWidth: 900,
+    minHeight: 560,
+    show: false,
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#04080a',
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+  homeWin.loadFile(path.join(rendererDir(), 'home', 'index.html'));
+  homeWin.on('closed', () => (homeWin = null));
+  homeWin.on('ready-to-show', () => homeWin?.show());
+  homeWin.on('close', (e) => {
+    // keep alive; close = hide (it's the app's entry hub)
+    e.preventDefault();
+    homeWin?.hide();
+  });
+  return homeWin;
+}
+
+export function toggleHome(): void {
+  if (!homeWin) return;
+  if (homeWin.isVisible() && homeWin.isFocused()) homeWin.hide();
+  else {
+    homeWin.show();
+    homeWin.focus();
+  }
+}
+
+// ---------- workbench window ----------
+
+let workbenchWin: BrowserWindow | null = null;
+
+export function getWorkbenchWindow(): BrowserWindow | null {
+  return workbenchWin;
+}
+
+export function createWorkbenchWindow(): BrowserWindow {
+  workbenchWin = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 960,
+    minHeight: 600,
+    show: false,
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#0a0d12',
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      sandbox: false,
+      partition: 'persist:workbench',
+      // local-first app: allow forged widgets to call public data APIs (CORS would
+      // otherwise block fetch from the file:// origin)
+      webSecurity: false,
+    },
+  });
+  // strip anti-framing headers so the search widget can iframe engine results
+  const ses = workbenchWin.webContents.session;
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    for (const key of Object.keys(headers)) {
+      const k = key.toLowerCase();
+      if (k === 'x-frame-options' || k === 'frame-options' || k.startsWith('content-security-policy')) {
+        delete headers[key];
+      }
+    }
+    callback({ responseHeaders: headers });
+  });
+  workbenchWin.loadFile(path.join(rendererDir(), 'workbench', 'index.html'));
+  workbenchWin.on('closed', () => (workbenchWin = null));
+  workbenchWin.on('close', (e) => {
+    // keep the instance alive; close = hide
+    e.preventDefault();
+    workbenchWin?.hide();
+  });
+  return workbenchWin;
+}
+
+export function toggleWorkbench(): void {
+  if (!workbenchWin) return;
+  if (workbenchWin.isVisible() && workbenchWin.isFocused()) workbenchWin.hide();
+  else {
+    workbenchWin.show();
+    workbenchWin.focus();
+  }
+}
+
+// ---------- focus pill (dynamic-island style) ----------
+
+let pillWin: BrowserWindow | null = null;
+
+export function ensureFocusPill(): BrowserWindow {
+  if (pillWin && !pillWin.isDestroyed()) return pillWin;
+  const display = screen.getPrimaryDisplay();
+  const { x, y, width } = display.workArea;
+  pillWin = new BrowserWindow({
+    width: 260,
+    height: 40,
+    x: x + Math.round(width / 2) - 130,
+    y: y + 12,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    show: false,
+    fullscreenable: false,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+  pillWin.setAlwaysOnTop(true, 'screen-saver');
+  pillWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  pillWin.loadFile(path.join(rendererDir(), 'focus-pill', 'index.html'));
+  pillWin.on('closed', () => (pillWin = null));
+  return pillWin;
+}
+
+export function pushFocusStatus(status: { active: boolean } & Record<string, unknown>): void {
+  if (status.active) {
+    const win = ensureFocusPill();
+    const show = () => {
+      if (!win.isVisible()) win.show();
+      win.webContents.send(IPC.evFocusStatus, status);
+    };
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', show);
+    else show();
+  } else if (pillWin && !pillWin.isDestroyed()) {
+    pillWin.close();
+    pillWin = null;
+  }
+}
+
+export function movePillTo(x: number, y: number): void {
+  if (pillWin && !pillWin.isDestroyed()) {
+    pillWin.setPosition(Math.round(x), Math.round(y));
+  }
+}
+
 // ---------- fullscreen image preview ----------
 
 let previewWin: BrowserWindow | null = null;

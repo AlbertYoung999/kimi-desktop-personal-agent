@@ -697,7 +697,9 @@ $('btn-add-mode').onclick = async () => {
 
 // ---------- window controls ----------
 $('btn-close').onclick = () => window.kimi.hideChat();
+$('btn-workbench').onclick = () => window.kimi.toggleHome();
 window.kimi.onOpenChat(() => inputEl.focus());
+window.kimi.onLoadSession((sessionId) => void switchSession(sessionId));
 
 // ---------- pin (always-on-top) ----------
 let pinned = true;

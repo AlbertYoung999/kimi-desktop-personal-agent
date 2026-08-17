@@ -1,6 +1,6 @@
-# kimi-float
+# Kimi Desktop Personal Agent
 
-一个常驻 macOS 桌面的 Kimi 悬浮助手：蓝色小球常驻屏幕边缘，点一下就能问问题、发截图、收藏灵感。后端通过 **ACP（Agent Client Protocol）** 接入你本地的 `kimi` CLI，模型能力和工具调用全部由 kimi-code 提供。
+常驻 macOS 桌面的 Kimi 个人智能体：voice-first 主页 + 自进化工作台 + 悬浮小球的 all-in-one 桌面助手。后端通过 **ACP（Agent Client Protocol）** 接入你本地的 `kimi` CLI，模型能力和工具调用全部由 kimi-code 提供。
 
 ![一图说明](docs/overview.png)
 
@@ -26,7 +26,35 @@
 ![alt text](docs/image-8.png)
 3. 随身助手：解释原理、问个单词...
 ![alt text](docs/image-9.png)
+4. Voice-first 主页：文字输入 + TTS 语音播报，左侧实时系统指标
+![voice-first 主页](docs/voice-agent-homepage.jpg)
+5. 个人工作台：可对话自进化的 widget 系统
+![Personal Dashboard](docs/Personal%20Dashboard%20v1.0.jpg)
 More..
+
+## 个人工作区：Self-Evolving Workbench
+
+> 工作台不是一组写死的功能，而是一个**可以通过对话持续生长**的系统。
+
+**关键理念**
+
+- **工具即能力**：工作台内嵌 MCP Server，widget 能做什么就暴露什么工具。kimi 通过原生 tool calling 操作工作台——参数由 schema 强制校验，执行结果回传给模型，它能自我修正、多步编排。加能力 = 注册工具，prompt 一个字不用改
+- **应用层都可改**：自定义组件走 `artifact_modify`（差量改 HTML）；内置 widget 走 `widget_modify`——kimi 直接编辑自己的 TS 源码，esbuild 重建后热重载。边界明确：主进程、运行时骨架不可动，数据层/组件/内置 widget 的应用层全部可动
+- **可进化但不可改崩**：schema 校验（MCP 层）、构建失败自动回滚、快照撤销（undo 后自动重建）、error boundary（单组件崩溃不波及舞台）四道防线；每次操作记入 `evolve.jsonl`，逐帧可撤销
+
+![Self-Evolving Workbench](docs/self-evolving-workbench.svg)
+
+**实现逻辑**：用户在 Command Center 说「给 task-flow 加个项目功能」→ kimi 调 `widget_modify` → 专用会话（cwd 绑定仓库，fs 沙箱按会话隔离）编辑 `task-flow.ts` → 重建 → 工作台热重载 → 面板里的 FORGING 动效收尾，组件放大展示。修改自定义组件（如股票看板）则走 `artifact_modify`：生成新 HTML → 更新组件库 → 舞台自动重挂载。一次性生成调用共用一个「工具会话」（队列串行 + 计数轮换 + 启动时清扫），不会撑爆会话列表。
+
+## Voice Agent：voice-first 主页
+
+> 应用的启动入口不是一个聊天框，而是一个**活着的操作系统面板**。
+
+**设计理念**：voice-first 意味着语音是一等公民的交互通道，界面为「听 + 说」而不是「读 + 写」优化——中央的语音 orb 是状态的唯一主角（READY / THINKING / SPEAKING 三态呼吸动画），左右两侧只是上下文：左边是机器的状态（CPU / RAM / DISK / 网络 / 电池 / GPU / Top 进程，2 秒轮询，可开关），右边是对话的记录（EVENT LOG 流式滚动）。DASHBOARD 一键进入工作台。
+
+![Voice Agent](docs/voice-agent.svg)
+
+**实现逻辑**：底部输入文字 → 独立 ACP 会话流式返回 → 右栏 EVENT LOG 实时追加；回合结束后全文经 markdown 剥离交给 macOS `say` 播报（英文 Daniel 英音、中文自动切中文 voice），播报期间 orb 切到 SPEAKING 态，说新话自动打断。TTS 走系统能力零依赖零延迟；语音输入（STT）预留 whisper.cpp 本地方案（AudioWorklet 采 16kHz PCM → 主进程写 WAV → `whisper-cli` 转写），MIC 位已预留。
 
 ## 架构
 
@@ -68,7 +96,7 @@ npm run watch    # 开发模式
 
 ## 配置
 
-运行期配置都存放在系统用户目录（`~/Library/Application Support/kimi-float/`），不进入仓库：
+运行期配置都存放在系统用户目录（`~/Library/Application Support/Kimi Desktop Personal Agent/`），不进入仓库：
 
 - `settings.json` — 工作文件夹、vault 目录、权限模式
 - `modes.json` — 预设模式的自定义与删除记录

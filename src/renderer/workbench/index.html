@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="hud">
+    <header id="hud-top">
+      <div class="brand">JARVIS<span class="brand-dot">·</span>WORKBENCH</div>
+      <span class="hud-sep"></span>
+      <div id="clock"></div>
+      <div class="hud-status">SYS <b>ONLINE</b> · ACP <b>LINKED</b></div>
+      <div class="spacer"></div>
+      <button id="btn-palette" class="hud-btn">⌘K Command Center</button>
+      <button id="btn-agents" class="hud-btn">AGENTS.md</button>
+    </header>
+
+    <div id="hud-body">
+      <aside id="radar-strip"><!-- P1: Info Radar 侧边条 --></aside>
+      <main id="stage"><div id="stage-canvas"></div></main>
+    </div>
+
+    <footer id="dock">
+      <span id="dock-status" class="hud-status">WIDGETS: 0</span>
+      <button id="dock-add" title="添加 widget">＋</button>
+      <div id="dock-items"></div>
+    </footer>
+  </div>
+
+  <div id="palette" class="hidden">
+    <div id="palette-box">
+      <input id="palette-input" placeholder="输入指令或问题… (Esc 关闭)" autocomplete="off" />
+      <div id="palette-results"></div>
+    </div>
+  </div>
+
+  <div id="scanlines"></div>
+  <script src="./index.js"></script>
+</body>
+</html>

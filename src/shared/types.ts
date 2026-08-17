@@ -57,6 +57,7 @@ export interface ToolCallEvent {
   toolCallId: string;
   title: string;
   status: string;
+  detail?: string; // short params preview
 }
 
 export interface TurnDoneEvent {
@@ -102,12 +103,63 @@ export const IPC = {
   hideChat: 'window:hide-chat',
   setBallState: 'ball:set-state',
   ballMove: 'ball:move',
+  pillMove: 'pill:move',
   setChatPinned: 'window:set-chat-pinned',
   getChatPinned: 'window:get-chat-pinned',
   openExternal: 'shell:open-external',
   showImagePreview: 'preview:show',
   getPreviewImage: 'preview:get',
   closePreview: 'preview:close',
+  loadSessionInChat: 'ui:load-session',
+  // workbench
+  toggleWorkbench: 'wb:toggle',
+  wbGetLayout: 'wb:get-layout',
+  wbSaveLayout: 'wb:save-layout',
+  wbTasksList: 'wb:tasks-list',
+  wbTaskSave: 'wb:task-save',
+  wbTaskDelete: 'wb:task-delete',
+  wbProjectsList: 'wb:projects-list',
+  wbProjectSave: 'wb:project-save',
+  wbProjectDelete: 'wb:project-delete',
+  wbTaskStartSession: 'wb:task-start-session',
+  wbOpenSessionInChat: 'wb:open-session-in-chat',
+  wbGetEngines: 'wb:get-engines',
+  wbSaveEngine: 'wb:save-engine',
+  wbDeleteEngine: 'wb:delete-engine',
+  wbSearchLaunch: 'wb:search-launch',
+  wbFocusLog: 'wb:focus-log',
+  wbFocusHistory: 'wb:focus-history',
+  wbAgentsRead: 'wb:agents-read',
+  wbAgentsWrite: 'wb:agents-write',
+  wbAcpAsk: 'wb:acp-ask',
+  evWbAction: 'wb:action',
+  wbActionResult: 'wb:action-result',
+  evWbRefresh: 'wb:refresh',
+  setSessionAllow: 'acp:set-session-allow',
+  evArtifactUpdated: 'wb:artifact-updated',
+  evArtifactProgress: 'wb:artifact-progress',
+  wbEvolveLog: 'wb:evolve-log',
+  evWbNotify: 'wb:notify',
+  // home (voice-first entry)
+  homeAsk: 'home:ask',
+  toggleHome: 'home:toggle',
+  ttsSpeak: 'tts:speak',
+  ttsStop: 'tts:stop',
+  evSysStats: 'sys:stats',
+  // focus pill (dynamic-island style status bar)
+  focusStatus: 'focus:status',
+  evFocusStatus: 'focus:status-push',
+  // radar (P1)
+  wbRadarList: 'wb:radar-list',
+  wbRadarSave: 'wb:radar-save',
+  wbRadarDelete: 'wb:radar-delete',
+  wbRadarRunNow: 'wb:radar-run-now',
+  evRadarItems: 'wb:radar-items',
+  // forge (P1)
+  wbForgeGenerate: 'wb:forge-generate',
+  wbLibraryList: 'wb:library-list',
+  wbLibraryAdd: 'wb:library-add',
+  wbLibraryDelete: 'wb:library-delete',
   // events (main -> renderer)
   evChunk: 'acp:chunk',
   evToolCall: 'acp:tool-call',

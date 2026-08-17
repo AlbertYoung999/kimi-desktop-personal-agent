@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>KIMI · HOME</title>
+  <style>
+    :root {
+      --bg: #04080a;
+      --panel: rgba(6, 20, 16, 0.72);
+      --line: rgba(0, 229, 160, 0.16);
+      --line-soft: rgba(0, 229, 160, 0.07);
+      --green: #00e5a0;
+      --green-dim: #0a9d6e;
+      --green-dark: #1d5c44;
+      --green-faint: rgba(0, 229, 160, 0.55);
+      --text: #b9f5df;
+      --text-dim: #4e7a68;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    /* ---- 细密网格背景 ---- */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        repeating-linear-gradient(0deg, var(--line-soft) 0 1px, transparent 1px 48px),
+        repeating-linear-gradient(90deg, var(--line-soft) 0 1px, transparent 1px 48px);
+      opacity: 0.5;
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 45%, rgba(0, 229, 160, 0.05), transparent 65%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    #app {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    /* ================= 顶栏 ================= */
+    #topbar {
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      padding: 0 20px 0 80px; /* 左侧让出 macOS 红绿灯 */
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      letter-spacing: 2.5px;
+      color: var(--green);
+      text-shadow: 0 0 8px rgba(0, 229, 160, 0.5);
+    }
+    .brand .ver { color: var(--text-dim); letter-spacing: 1.5px; }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: blink 2.4s ease-in-out infinite;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+    #clock { text-align: center; line-height: 1.15; }
+    #clock-time {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      color: var(--green);
+      text-shadow: 0 0 12px rgba(0, 229, 160, 0.6);
+      font-variant-numeric: tabular-nums;
+    }
+    #clock-time .ampm { font-size: 13px; letter-spacing: 2px; margin-left: 6px; }
+    #clock-date {
+      font-size: 9px;
+      letter-spacing: 2.5px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    #btn-dashboard {
+      -webkit-app-region: no-drag;
+      background: transparent;
+      border: 1px solid var(--green-dim);
+      color: var(--green);
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 2px;
+      padding: 7px 16px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #btn-dashboard:hover {
+      background: rgba(0, 229, 160, 0.12);
+      box-shadow: 0 0 12px rgba(0, 229, 160, 0.25);
+    }
+
+    /* ================= 主区域 ================= */
+    #main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 240px 1fr 330px;
+      gap: 14px;
+      padding: 14px 16px;
+      min-height: 0;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 12px 14px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .section-title {
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: var(--green);
+      margin-bottom: 10px;
+      text-shadow: 0 0 6px rgba(0, 229, 160, 0.4);
+    }
+
+    /* ---- 左栏 SYSTEM ---- */
+    .meter { margin-bottom: 10px; }
+    .meter-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+    .meter-head .val { color: var(--green); }
+    .meter-track {
+      height: 8px;
+      background: rgba(0, 229, 160, 0.08);
+      border: 1px solid var(--line-soft);
+    }
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--green-dark), var(--green));
+      box-shadow: 0 0 8px rgba(0, 229, 160, 0.45);
+      transition: width 0.6s ease;
+    }
+
+    .stat-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+      margin: 6px 0 14px;
+    }
+    .stat-card {
+      border: 1px solid var(--line-soft);
+      background: rgba(0, 229, 160, 0.04);
+      padding: 7px 4px 5px;
+      text-align: center;
+    }
+    .stat-card .num {
+      font-size: 12px;
+      color: var(--green);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .stat-card .lbl {
+      font-size: 8px;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-top: 3px;
+    }
+
+    /* ---- MODULES ---- */
+    .modules { margin-bottom: 14px; }
+    .module-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      letter-spacing: 1px;
+      padding: 4px 0;
+    }
+    .module-row .mdot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      flex-shrink: 0;
+    }
+    .module-row.off .mdot { background: #3a4a44; box-shadow: none; }
+    .module-row .mname { color: var(--text-dim); width: 52px; flex-shrink: 0; }
+    .module-row .mval { color: var(--text); }
+    .module-row.off .mval { color: var(--text-dim); }
+    .module-row .mtag {
+      margin-left: auto;
+      font-size: 8px;
+      color: var(--text-dim);
+      border: 1px solid var(--line-soft);
+      padding: 1px 5px;
+    }
+
+    /* ---- WORKSHOP ---- */
+    .workshop-list { display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+    .ws-item {
+      font-size: 10px;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ws-item .ws-title { color: var(--green-dim); }
+    .ws-item.empty { color: #35544a; font-style: italic; }
+
+    /* ---- 中央 orb ---- */
+    #center {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 0;
+    }
+    #orb-canvas { display: block; }
+    #orb-status {
+      margin-top: 18px;
+      font-size: 10px;
+      letter-spacing: 4px;
+      color: var(--green-faint);
+      text-shadow: 0 0 8px rgba(0, 229, 160, 0.3);
+    }
+
+    /* ---- 右栏 EVENT LOG ---- */
+    #log-list {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-right: 4px;
+      user-select: text;
+    }
+    #log-list::-webkit-scrollbar { width: 4px; }
+    #log-list::-webkit-scrollbar-thumb { background: var(--green-dark); }
+    .log-entry { font-size: 10.5px; line-height: 1.55; word-break: break-word; }
+    .log-entry .meta { letter-spacing: 0.5px; }
+    .log-entry.you .meta { color: var(--text-dim); }
+    .log-entry.you .body { color: #6fa88f; }
+    .log-entry.kimi .meta { color: var(--green-dim); }
+    .log-entry.kimi .body { color: var(--green); }
+    .log-entry .body { white-space: pre-wrap; }
+    .log-entry.streaming .body::after {
+      content: "▊";
+      animation: blink 0.8s step-end infinite;
+    }
+
+    /* ================= 底部 ================= */
+    #bottom { flex-shrink: 0; border-top: 1px solid var(--line); }
+
+    #ticker-wrap {
+      overflow: hidden;
+      border-bottom: 1px solid var(--line-soft);
+      height: 22px;
+      display: flex;
+      align-items: center;
+    }
+    #ticker {
+      white-space: nowrap;
+      font-size: 9px;
+      letter-spacing: 1px;
+      color: var(--green-dark);
+      animation: ticker-scroll 40s linear infinite;
+    }
+    @keyframes ticker-scroll {
+      from { transform: translateX(0); }
+      to { transform: translateX(-50%); }
+    }
+
+    #input-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+    }
+    #prompt-char { color: var(--green); font-size: 15px; text-shadow: 0 0 8px rgba(0, 229, 160, 0.6); }
+    #input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--green);
+      font-family: inherit;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      caret-color: var(--green);
+    }
+    #input::placeholder { color: #2e4f42; }
+    .btn {
+      background: transparent;
+      border: 1px solid var(--green-dim);
+      color: var(--green);
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 2px;
+      padding: 7px 18px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover:not(:disabled) {
+      background: rgba(0, 229, 160, 0.12);
+      box-shadow: 0 0 12px rgba(0, 229, 160, 0.25);
+    }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ================= SYSTEM 指标区块 ================= */
+    #left-panel { position: relative; }
+    .sys-title { display: flex; align-items: center; justify-content: space-between; }
+    #btn-metrics-gear {
+      background: transparent;
+      border: 1px solid var(--line-soft);
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 10px;
+      width: 20px;
+      height: 20px;
+      line-height: 1;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #btn-metrics-gear:hover { color: var(--green); border-color: var(--green-dim); }
+
+    .metric-block { margin-bottom: 12px; }
+    .metric-off { display: none !important; }
+    .block-label {
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 5px;
+    }
+    .meter-head .sub { color: var(--text-dim); margin-left: 6px; }
+
+    /* DISK donut */
+    .donut-wrap { position: relative; width: 72px; height: 72px; margin: 2px auto 0; }
+    .donut-bg { fill: none; stroke: rgba(0, 229, 160, 0.08); stroke-width: 6; }
+    .donut-fg {
+      fill: none;
+      stroke: var(--green);
+      stroke-width: 6;
+      stroke-linecap: round;
+      stroke-dasharray: 188.5;
+      stroke-dashoffset: 188.5;
+      transform: rotate(-90deg);
+      transform-origin: center;
+      filter: drop-shadow(0 0 4px rgba(0, 229, 160, 0.5));
+      transition: stroke-dashoffset 0.6s ease;
+    }
+    .donut-num {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      color: var(--green);
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 8px rgba(0, 229, 160, 0.5);
+    }
+
+    /* 网络 sparkline */
+    #net-spark {
+      display: block;
+      width: 100%;
+      height: 36px;
+      border: 1px solid var(--line-soft);
+      background: rgba(0, 229, 160, 0.03);
+    }
+    .net-vals .up { color: #00d5e5; margin-left: 8px; }
+
+    /* 电池 */
+    .batt-row { display: flex; align-items: center; gap: 8px; }
+    .batt-icon {
+      position: relative;
+      width: 34px;
+      height: 14px;
+      border: 1px solid var(--green-dim);
+      padding: 2px;
+    }
+    .batt-icon::after {
+      content: "";
+      position: absolute;
+      right: -4px;
+      top: 3px;
+      width: 3px;
+      height: 6px;
+      background: var(--green-dim);
+    }
+    .batt-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(0, 229, 160, 0.5);
+      transition: width 0.6s ease;
+    }
+    .batt-pct { font-size: 11px; color: var(--green); font-variant-numeric: tabular-nums; }
+    .batt-bolt { color: var(--green); font-size: 11px; text-shadow: 0 0 6px rgba(0, 229, 160, 0.7); }
+
+    /* Wi-Fi */
+    .wifi-line { font-size: 10px; letter-spacing: 1px; color: var(--text-dim); }
+    .wifi-line span { color: var(--text); }
+
+    /* TOP 进程 */
+    #top-list { display: flex; flex-direction: column; gap: 3px; }
+    .top-row { display: flex; font-size: 9.5px; }
+    .top-row .tp-cpu { color: var(--green); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+    .top-row .tp-name {
+      color: var(--text-dim);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-left: 8px;
+      text-align: right;
+      flex: 1;
+    }
+
+    .stat-cards.two { grid-template-columns: 1fr 1fr; }
+
+    /* 指标开关浮层 */
+    #metrics-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      background: rgba(4, 12, 9, 0.96);
+      border: 1px solid var(--line);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    #metrics-overlay[hidden] { display: none; }
+    .mo-title {
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: var(--green);
+      margin-bottom: 4px;
+      text-shadow: 0 0 6px rgba(0, 229, 160, 0.4);
+    }
+    #metrics-overlay label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      letter-spacing: 1px;
+      color: var(--text);
+      cursor: pointer;
+    }
+    #metrics-overlay input[type="checkbox"] { accent-color: var(--green); }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 顶栏 -->
+    <header id="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <span>KIMI · CORE LISTENING <span class="ver">v0.1</span></span>
+      </div>
+      <div id="clock">
+        <div id="clock-time">--:--:--<span class="ampm">--</span></div>
+        <div id="clock-date">----年--月--日 星期-</div>
+      </div>
+      <button id="btn-dashboard">DASHBOARD</button>
+    </header>
+
+    <!-- 主区域 -->
+    <div id="main">
+      <!-- 左栏 -->
+      <aside class="panel" id="left-panel">
+        <div class="section-title sys-title">
+          <span>// SYSTEM</span>
+          <button id="btn-metrics-gear" title="指标开关">⚙</button>
+        </div>
+
+        <div class="metric-block" id="m-cpu">
+          <div class="meter">
+            <div class="meter-head"><span>CPU</span><span class="val" id="cpu-val">--%</span></div>
+            <div class="meter-track"><div class="meter-fill" id="cpu-fill"></div></div>
+          </div>
+        </div>
+
+        <div class="metric-block" id="m-ram">
+          <div class="meter">
+            <div class="meter-head">
+              <span>RAM</span>
+              <span><span class="val" id="mem-val">--%</span><span class="sub" id="mem-gb">--/-- GB</span></span>
+            </div>
+            <div class="meter-track"><div class="meter-fill" id="mem-fill"></div></div>
+          </div>
+        </div>
+
+        <div class="metric-block" id="m-disk">
+          <div class="block-label">DISK</div>
+          <div class="donut-wrap">
+            <svg viewBox="0 0 72 72" width="72" height="72">
+              <circle class="donut-bg" cx="36" cy="36" r="30"></circle>
+              <circle class="donut-fg" id="disk-arc" cx="36" cy="36" r="30"></circle>
+            </svg>
+            <div class="donut-num" id="disk-val">--%</div>
+          </div>
+        </div>
+
+        <div class="metric-block" id="m-net">
+          <div class="meter-head">
+            <span>NET</span>
+            <span class="net-vals"><span class="val" id="net-in">↓ -- KB/s</span><span class="val up" id="net-out">↑ -- KB/s</span></span>
+          </div>
+          <canvas id="net-spark"></canvas>
+        </div>
+
+        <div class="metric-block" id="m-battery">
+          <div class="block-label">BATTERY</div>
+          <div class="batt-row">
+            <div class="batt-icon"><div class="batt-fill" id="batt-fill"></div></div>
+            <span class="batt-pct" id="batt-pct">--%</span>
+            <span class="batt-bolt" id="batt-bolt" hidden>⚡</span>
+          </div>
+        </div>
+
+        <div class="metric-block" id="m-wifi">
+          <span class="wifi-line">⌁ <span id="wifi-ssid">--</span></span>
+        </div>
+
+        <div class="metric-block" id="m-top">
+          <div class="block-label">TOP PROCS</div>
+          <div id="top-list"></div>
+        </div>
+
+        <div class="stat-cards two">
+          <div class="stat-card"><div class="num" id="stat-load">--</div><div class="lbl">负载</div></div>
+          <div class="stat-card"><div class="num" id="stat-uptime">--</div><div class="lbl">运行</div></div>
+        </div>
+
+        <div class="section-title">// MODULES</div>
+        <div class="modules">
+          <div class="module-row off">
+            <span class="mdot"></span><span class="mname">STT</span><span class="mval">WHISPER</span><span class="mtag">待接入</span>
+          </div>
+          <div class="module-row">
+            <span class="mdot"></span><span class="mname">BRAIN</span><span class="mval">KIMI-ACP</span>
+          </div>
+          <div class="module-row">
+            <span class="mdot"></span><span class="mname">VOICE</span><span class="mval">DANIEL-GB</span>
+          </div>
+          <div class="module-row">
+            <span class="mdot"></span><span class="mname">ORB</span><span class="mval">CORE</span>
+          </div>
+          <div class="module-row">
+            <span class="mdot"></span><span class="mname">GPU</span><span class="mval" id="gpu-model">--</span>
+          </div>
+        </div>
+
+        <div class="section-title">// WORKSHOP</div>
+        <div class="workshop-list" id="workshop-list">
+          <div class="ws-item empty">载入中…</div>
+        </div>
+
+        <!-- 指标开关浮层 -->
+        <div id="metrics-overlay" hidden>
+          <div class="mo-title">// 指标开关</div>
+          <label><input type="checkbox" data-metric="cpu" /> CPU</label>
+          <label><input type="checkbox" data-metric="ram" /> RAM</label>
+          <label><input type="checkbox" data-metric="disk" /> DISK</label>
+          <label><input type="checkbox" data-metric="net" /> 网络</label>
+          <label><input type="checkbox" data-metric="battery" /> 电池</label>
+          <label><input type="checkbox" data-metric="wifi" /> Wi-Fi</label>
+          <label><input type="checkbox" data-metric="top" /> TOP 进程</label>
+        </div>
+      </aside>
+
+      <!-- 中央 orb -->
+      <section id="center">
+        <canvas id="orb-canvas" width="420" height="420"></canvas>
+        <div id="orb-status">READY…</div>
+      </section>
+
+      <!-- 右栏 EVENT LOG -->
+      <aside class="panel" id="right-panel">
+        <div class="section-title">// EVENT LOG</div>
+        <div id="log-list"></div>
+      </aside>
+    </div>
+
+    <!-- 底部 -->
+    <footer id="bottom">
+      <div id="ticker-wrap"><div id="ticker"></div></div>
+      <div id="input-row">
+        <span id="prompt-char">›</span>
+        <input id="input" type="text" placeholder="Message KIMI…" autocomplete="off" spellcheck="false" />
+        <button class="btn" id="btn-mic" disabled title="下期接入 whisper">MIC</button>
+        <button class="btn" id="btn-send">SEND</button>
+      </div>
+    </footer>
+  </div>
+  <script src="./index.js"></script>
+</body>
+</html>

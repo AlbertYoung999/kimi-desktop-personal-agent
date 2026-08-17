@@ -1,8 +1,24 @@
 # Changelog
 
-All notable changes to kimi-float will be documented in this file.
+All notable changes to Kimi Desktop Personal Agent will be documented in this file.
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
+
+## [0.2.0] - 2026-08-17
+
+大版本：**Jarvis 工作台** + **Voice-first 主页** + **自进化引擎**。详细设计逻辑见 `changelog-0816.md`（开发记录）。
+
+### Added
+
+- **Jarvis 工作台**：独立可全屏窗口（`⌘⇧J` / 对话窗 ▦ 入口），HUD 布局 + widget 运行时（拖拽/缩放/双击放大/Dock 休眠/布局持久化/舞台滚动）；P0 模块：Deep Focus 番茄钟、Task Flow 任务看板（看板+月历+任务转 AI Session）、Command Center 命令面板、One-for-All Search 多引擎应用内 tab 查看、Agents.md 编辑器；P1 模块：Widget Forge（对话式生成组件 + 组件库）、Info Radar（定时抓取 + AI 结构化 + Feed/Thread + 设置面板 + 轮播）
+- **Voice-first 主页**：启动入口（终端绿 HUD）：中央语音 orb 三态动画、左栏系统指标（CPU/RAM/DISK/网络/电池/Wi-Fi/GPU/Top 进程，⚙ 开关浮层）、右栏流式对话日志、底部输入；回复自动 TTS 语音播报（macOS `say`，英文 Daniel 英音/中文自动切换）
+- **自进化引擎（E1→E3）**：工作台内嵌 MCP Server，kimi 原生 tool calling 操控工作台（schema 校验 + 结果回传）；11+ 工具覆盖任务/雷达/布局/组件/源码五层；`artifact_modify` 对话改自定义组件（自动重挂载）；`widget_modify` 对话改内置 widget 源码（自动重建热重载）；演化日志 + 快照撤销 + error boundary + 构建回滚四道防线
+- **灵动岛**：番茄钟置顶倒计时 pill，可拖拽，双击唤起工作台
+- 消息队列自动续发、右键选中引用提问、图片粘贴、月之暗面主题等对话窗持续改进
+
+### Fixed
+
+- Forge 权限卡死（askOnce 会话自动批准）、生成物 ID 冲突（Proxy document 作用域隔离）、一次性会话污染（垃圾桶启动清扫 + 会话回收轮换）、kimi 存储竞态（会话自愈重建）、MCP 60s 超时（后台执行 + 完成推送）、HN 旧数据（search_by_date）、快照时序 bug（撤销空转）
 
 ## [0.1.1] - 2026-08-11
 
