@@ -142,6 +142,7 @@ export interface KimiApi {
   wbActionResult(payload: { requestId: string; message: string }): Promise<void>;
   onWbRefresh(cb: (p: { kind: 'tasks' | 'radars' }) => void): void;
   setSessionAllow(sessionId: string, allowed: boolean): void;
+  setSessionKind(sessionId: string, kind: 'chat' | 'auto'): Promise<SessionMeta[]>;
   onArtifactUpdated(cb: (item: { id: string; title: string; html: string }) => void): void;
   onArtifactProgress(cb: (p: ArtifactProgress) => void): void;
   onWbNotify(cb: (n: { kind: 'success' | 'error' | 'info'; message: string }) => void): void;

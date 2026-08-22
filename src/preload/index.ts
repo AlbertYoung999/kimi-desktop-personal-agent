@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld('kimi', {
   onWbRefresh: on<unknown>(IPC.evWbRefresh),
   setSessionAllow: (sessionId: string, allowed: boolean): void =>
     void ipcRenderer.send(IPC.setSessionAllow, { sessionId, allowed }),
+  setSessionKind: (sessionId: string, kind: 'chat' | 'auto'): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.setSessionKind, { sessionId, kind }),
   onArtifactUpdated: on<unknown>(IPC.evArtifactUpdated),
   onArtifactProgress: on<unknown>(IPC.evArtifactProgress),
   onWbNotify: on<unknown>(IPC.evWbNotify),

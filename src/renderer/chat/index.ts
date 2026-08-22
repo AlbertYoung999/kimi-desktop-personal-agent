@@ -552,29 +552,71 @@ $('btn-sessions').onclick = async () => {
   openPanel('panel-sessions');
 };
 
+let sessionFilter: 'all' | 'chat' | 'auto' = 'all';
+
+for (const tab of document.querySelectorAll<HTMLButtonElement>('#session-tabs button')) {
+  tab.onclick = () => {
+    sessionFilter = tab.dataset.kind as typeof sessionFilter;
+    for (const t of document.querySelectorAll('#session-tabs button')) t.classList.remove('active');
+    tab.classList.add('active');
+    renderSessionList();
+  };
+}
+
 function renderSessionList() {
   const list = $('session-list');
   list.innerHTML = '';
-  if (sessions.length === 0) {
+  const visible = sessions.filter((s) => sessionFilter === 'all' || (s.kind ?? 'auto') === sessionFilter);
+  if (visible.length === 0) {
     list.innerHTML = '<div class="empty-hint">还没有会话<br />直接在下方输入，开始第一段对话吧</div>';
     return;
   }
-  for (const s of sessions) {
+  for (const s of visible) {
     const item = document.createElement('div');
     item.className = 'session-item' + (currentSession?.sessionId === s.sessionId ? ' active' : '');
-    item.innerHTML = `<div class="s-title"></div><div class="s-time">${new Date(s.updatedAt).toLocaleString()}</div>`;
+    const kind = s.kind ?? 'auto';
+    item.innerHTML = `<div class="s-title"></div><div class="s-time">${new Date(s.updatedAt).toLocaleString()}<span class="s-kind">${kind}</span></div>`;
     item.querySelector('.s-title')!.textContent = s.title || '未命名会话';
     item.onclick = () => void switchSession(s.sessionId);
+    item.oncontextmenu = (e) => {
+      e.preventDefault();
+      closeCtxMenu();
+      ctxMenu = document.createElement('div');
+      ctxMenu.id = 'ctx-menu';
+      const target = kind === 'chat' ? 'auto' : 'chat';
+      const move = document.createElement('button');
+      move.textContent = target === 'chat' ? '移到 Chat' : '移到 Auto';
+      move.onclick = async () => {
+        sessions = await window.kimi.setSessionKind(s.sessionId, target);
+        renderSessionList();
+        closeCtxMenu();
+      };
+      ctxMenu.appendChild(move);
+      document.body.appendChild(ctxMenu);
+      ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - ctxMenu.offsetWidth - 8) + 'px';
+      ctxMenu.style.top = Math.min(e.clientY, window.innerHeight - ctxMenu.offsetHeight - 8) + 'px';
+    };
     list.appendChild(item);
   }
 }
 
 async function switchSession(sessionId: string) {
   messagesEl.innerHTML = '';
-  const { meta, history } = await window.kimi.loadSession(sessionId);
+  const { meta, history, live } = await window.kimi.loadSession(sessionId);
   currentSession = meta;
   for (const item of history) {
     addMessage(item.role, item.text);
+  }
+  if (live) {
+    // session is mid-turn (e.g. a task session just launched) — don't replay,
+    // stream what's coming; a hint marks the seam
+    const hint = document.createElement('div');
+    hint.className = 'msg tool';
+    hint.textContent = '⏵ 任务正在执行中，输出将实时显示…';
+    messagesEl.appendChild(hint);
+    streaming = true;
+    updateSendBtn();
+    window.kimi.setBallState('thinking');
   }
   scrollToBottom(true);
   $('session-title').textContent = currentSession.title || '会话';

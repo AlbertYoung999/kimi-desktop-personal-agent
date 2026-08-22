@@ -52,6 +52,8 @@ export function getSessionIndex(): SessionMeta[] {
 }
 
 export function upsertSession(meta: SessionMeta): void {
+  const prev = getSessionIndex().find((s) => s.sessionId === meta.sessionId);
+  if (prev?.kind && !meta.kind) meta.kind = prev.kind; // preserve category across title updates
   const list = getSessionIndex().filter((s) => s.sessionId !== meta.sessionId);
   list.unshift(meta);
   writeJson('sessions.json', list.slice(0, 200));
@@ -59,6 +61,19 @@ export function upsertSession(meta: SessionMeta): void {
 
 export function removeSessionFromIndex(sessionId: string): void {
   writeJson('sessions.json', getSessionIndex().filter((s) => s.sessionId !== sessionId));
+}
+
+export function setSessionKind(sessionId: string, kind: 'chat' | 'auto'): void {
+  const list = getSessionIndex();
+  const entry = list.find((s) => s.sessionId === sessionId);
+  if (entry) {
+    entry.kind = kind;
+    writeJson('sessions.json', list);
+  } else {
+    // session not in index yet (e.g. created by another client) — remember the override
+    list.unshift({ sessionId, cwd: '', title: '', createdAt: Date.now(), updatedAt: Date.now(), kind });
+    writeJson('sessions.json', list);
+  }
 }
 
 // ---------- preset modes ----------

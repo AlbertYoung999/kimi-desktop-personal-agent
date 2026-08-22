@@ -1,5 +1,5 @@
 import { registerWidget } from '../core/registry';
-import type { Project, Task, TaskPriority, TaskStatus } from '../../../shared/workbench-types';
+import type { Project, Task, TaskPriority, TaskRecurrence, TaskStatus } from '../../../shared/workbench-types';
 import { DEFAULT_PROJECT_ID } from '../../../shared/workbench-types';
 
 /* ------------------------------------------------------------------ */
@@ -50,6 +50,7 @@ const CSS = `
 }
 .wf-task-flow-cards { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; min-height: 40px; }
 .wf-task-flow-card {
+  position: relative;
   display: flex; gap: 8px; align-items: flex-start; background: var(--card);
   border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
   cursor: grab; transition: border-color 120ms var(--ease-in);
@@ -61,7 +62,9 @@ const CSS = `
   cursor: pointer; box-shadow: 0 0 6px currentColor;
 }
 .wf-task-flow-cardmain { flex: 1; min-width: 0; }
-.wf-task-flow-cardtitle { font-size: 12.5px; line-height: 1.4; cursor: text; word-break: break-word; }
+.wf-task-flow-cardtitlerow { display: flex; align-items: baseline; gap: 5px; }
+.wf-task-flow-cardtitle { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; cursor: text; word-break: break-word; }
+.wf-task-flow-recur { font-size: 11px; color: var(--muted); flex-shrink: 0; cursor: default; }
 .wf-task-flow-card.done .wf-task-flow-cardtitle { color: var(--disabled); text-decoration: line-through; }
 .wf-task-flow-carddue { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 4px; }
 .wf-task-flow-carddue.overdue { color: var(--error); }
@@ -125,9 +128,32 @@ const CSS = `
 }
 .wf-task-flow-projinput::placeholder { color: var(--disabled); }
 .wf-task-flow-cardproj {
-  display: inline-block; margin-top: 4px; padding: 0 7px; border-radius: 8px;
-  border: 1px solid; font-family: var(--mono); font-size: 10px; line-height: 16px;
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; margin-right: 26px;
+  font-family: var(--mono); font-size: 10px; color: var(--muted); line-height: 16px;
 }
+.wf-task-flow-cardproj-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 6px currentColor; }
+.wf-task-flow-play {
+  position: absolute; right: 8px; bottom: 8px; width: 22px; height: 22px; padding: 0;
+  border: 1px solid rgba(0,240,255,0.35); border-radius: 50%;
+  background: rgba(0,240,255,0.08); color: var(--neon); font-size: 9px; line-height: 1;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: transform 120ms var(--ease-in), box-shadow 120ms var(--ease-in);
+}
+.wf-task-flow-play:hover { transform: scale(1.18); box-shadow: 0 0 10px rgba(0,240,255,0.35); }
+.wf-task-flow-play:disabled { opacity: 0.5; cursor: default; transform: none; }
+.wf-task-flow-projedit { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.wf-task-flow-colordots { display: flex; align-items: center; gap: 5px; }
+.wf-task-flow-colordot {
+  width: 12px; height: 12px; border-radius: 50%; border: 1px solid transparent;
+  cursor: pointer; padding: 0; flex-shrink: 0;
+}
+.wf-task-flow-colordot.active { border-color: #fff; box-shadow: 0 0 6px currentColor; }
+.wf-task-flow-projeditbtn {
+  border: 1px solid var(--border); background: transparent; color: var(--disabled);
+  font: inherit; font-size: 11px; width: 24px; height: 24px; border-radius: 6px;
+  cursor: pointer; flex-shrink: 0;
+}
+.wf-task-flow-projeditbtn:hover { color: var(--neon); border-color: var(--border-strong); }
 
 /* empty state */
 .wf-task-flow-empty {
@@ -152,6 +178,7 @@ const CSS = `
   border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink: 0;
 }
 .wf-task-flow-panelhead span { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+.wf-task-flow-saved { font-size: 10px !important; color: var(--disabled) !important; letter-spacing: 0 !important; margin-left: 6px; }
 .wf-task-flow-panelclose {
   margin-left: auto; border: none; background: none; color: var(--disabled);
   font-size: 15px; cursor: pointer; width: 24px; height: 24px; border-radius: 5px;
@@ -220,6 +247,14 @@ const PRIORITY_COLOR: Record<TaskPriority, string> = {
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 
+const RECURRENCE_ORDER: TaskRecurrence[] = ['none', 'daily', 'workdays', 'weekly'];
+const RECURRENCE_LABEL: Record<TaskRecurrence, string> = {
+  none: '不重复',
+  daily: '每天',
+  workdays: '工作日',
+  weekly: '每周',
+};
+
 /** 项目标签色板：按项目名 hash 取色 */
 const PROJECT_PALETTE = ['#00f0ff', '#00ff88', '#ffb020', '#ff7ab8', '#9d7bff', '#ff8844'];
 
@@ -227,11 +262,6 @@ function projectColor(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
   return PROJECT_PALETTE[Math.abs(h) % PROJECT_PALETTE.length];
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -303,6 +333,12 @@ function fmtWhen(s: string): string {
 function clockOf(s: string): string {
   const d = new Date(s);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** HH:MM:SS，详情面板「已保存」微提示用 */
+function clockHMS(ts: number): string {
+  const d = new Date(ts);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
 function isOverdue(t: Task): boolean {
@@ -414,6 +450,30 @@ registerWidget({
       renderContent();
     }
 
+    /** 启动任务 Session：status→in_progress，payload 带 notes，startTaskSession 后落盘 */
+    async function launchTaskSession(t: Task): Promise<void> {
+      // PRD：assign 给 Agent 后任务进入进行中，否则 Agent 不会执行
+      t.status = 'in_progress';
+      t.completedAt = undefined;
+      const payload = JSON.stringify({
+        task: {
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          notes: t.notes,
+          status: t.status,
+          priority: t.priority,
+          startDate: t.startDate,
+          dueDate: t.dueDate,
+          tags: t.tags,
+        },
+        context: '你需要帮我完成这个任务，请基于描述给出执行建议或直接开始。',
+      });
+      const sessionId = await ctx.api.startTaskSession(payload);
+      t.sessionId = sessionId;
+      await persist(t);
+    }
+
     /** 任务归属项目：未显式挂载的存量任务视为默认项目 */
     function taskProject(t: Task): string {
       return t.projectId ?? DEFAULT_PROJECT_ID;
@@ -421,6 +481,12 @@ registerWidget({
 
     function projectName(id: string): string {
       return state.projects.find((p) => p.id === id)?.name ?? '默认';
+    }
+
+    /** 项目标识色：优先项目自带 color，存量项目回退到按名 hash */
+    function projectColorOf(id: string): string {
+      const p = state.projects.find((x) => x.id === id);
+      return p?.color ?? projectColor(p?.name ?? '默认');
     }
 
     function filtered(): Task[] {
@@ -440,10 +506,12 @@ registerWidget({
     const btnCal = el('button', 'wf-task-flow-viewbtn', '日历');
     const projSel = el('select', 'wf-task-flow-projsel') as HTMLSelectElement;
     projSel.title = '切换项目';
+    const projEditBtn = el('button', 'wf-task-flow-projeditbtn', '✎');
+    projEditBtn.title = '编辑项目（名称/颜色）';
     const search = el('input', 'wf-task-flow-search') as HTMLInputElement;
     search.placeholder = '搜索任务…';
     const btnNew = el('button', 'wf-task-flow-newbtn', '＋ 新建');
-    topbar.append(btnBoard, btnCal, projSel, search, btnNew);
+    topbar.append(btnBoard, btnCal, projSel, projEditBtn, search, btnNew);
 
     const NEW_PROJECT_VALUE = '__new__';
 
@@ -458,30 +526,60 @@ registerWidget({
       for (const p of state.projects) add(p.id, p.name);
       add(NEW_PROJECT_VALUE, '＋ 新建项目…');
       projSel.value = state.projectId;
+      projEditBtn.style.display = state.projects.some((p) => p.id === state.projectId) ? '' : 'none';
     }
 
     projSel.addEventListener('change', () => {
       const v = projSel.value;
       if (v === NEW_PROJECT_VALUE) {
-        startProjectCreate();
+        startProjectEdit();
         return;
       }
       state.projectId = v;
       ctx.setConfig({ projectId: v });
+      renderProjectOptions();
       renderContent();
     });
 
-    /** 把项目下拉换成内联输入框：回车创建新项目，Esc/blur 还原 */
-    function startProjectCreate(): void {
+    projEditBtn.addEventListener('click', () => {
+      const p = state.projects.find((x) => x.id === state.projectId);
+      if (p) startProjectEdit(p);
+    });
+
+    /** 把项目下拉换成内联编辑器：名称 + 颜色点，回车保存，Esc/blur 还原 */
+    function startProjectEdit(existing?: Project): void {
+      const wrap = el('div', 'wf-task-flow-projedit');
       const input = el('input', 'wf-task-flow-projinput') as HTMLInputElement;
-      input.placeholder = '新项目名称，回车创建';
-      projSel.replaceWith(input);
+      input.placeholder = existing ? '项目名称，回车保存' : '新项目名称，回车创建';
+      input.value = existing?.name ?? '';
+      let color = existing?.color ?? PROJECT_PALETTE[state.projects.length % PROJECT_PALETTE.length];
+      const dots = el('div', 'wf-task-flow-colordots');
+      const dotEls: HTMLButtonElement[] = [];
+      for (const c of PROJECT_PALETTE) {
+        const d = el('button', 'wf-task-flow-colordot') as HTMLButtonElement;
+        d.style.background = c;
+        d.style.color = c;
+        d.title = c;
+        if (c === color) d.classList.add('active');
+        // mousedown 阻止默认行为，避免点色点时 input 失焦触发 blur 还原
+        d.addEventListener('mousedown', (e) => e.preventDefault());
+        d.addEventListener('click', () => {
+          color = c;
+          for (const x of dotEls) x.classList.toggle('active', x === d);
+        });
+        dotEls.push(d);
+        dots.appendChild(d);
+      }
+      wrap.append(input, dots);
+      projSel.replaceWith(wrap);
+      projEditBtn.style.display = 'none';
       input.focus();
+      input.select();
       let done = false;
       const restore = (): void => {
         if (done) return;
         done = true;
-        input.replaceWith(projSel);
+        wrap.replaceWith(projSel);
         renderProjectOptions();
       };
       input.addEventListener('keydown', (e) => {
@@ -498,17 +596,20 @@ registerWidget({
         }
         done = true;
         const nowTs = Date.now();
-        const p: Project = {
-          id: `p${nowTs.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-          name,
-          createdAt: nowTs,
-          updatedAt: nowTs,
-        };
+        const p: Project = existing
+          ? { ...existing, name, color, updatedAt: nowTs }
+          : {
+              id: `p${nowTs.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+              name,
+              color,
+              createdAt: nowTs,
+              updatedAt: nowTs,
+            };
         void ctx.api.saveProject(p).then((projects) => {
           state.projects = projects;
           state.projectId = p.id;
           ctx.setConfig({ projectId: p.id });
-          input.replaceWith(projSel);
+          wrap.replaceWith(projSel);
           renderProjectOptions();
           renderContent();
         });
@@ -544,7 +645,13 @@ registerWidget({
       const tasks = filtered();
 
       for (const col of COLUMNS) {
-        const colTasks = tasks.filter((t) => t.status === col.id);
+        // 列内排序：优先级 urgent→low，同优先级按 updatedAt 越近越靠前
+        const colTasks = tasks
+          .filter((t) => t.status === col.id)
+          .sort(
+            (a, b) =>
+              PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority) || b.updatedAt - a.updatedAt,
+          );
         const colEl = el('div', 'wf-task-flow-col');
         colEl.dataset.status = col.id;
 
@@ -615,13 +722,20 @@ registerWidget({
       });
 
       const main = el('div', 'wf-task-flow-cardmain');
+      const titleRow = el('div', 'wf-task-flow-cardtitlerow');
       const title = el('div', 'wf-task-flow-cardtitle', t.title);
       title.title = '点击编辑标题';
       title.addEventListener('click', (e) => {
         e.stopPropagation();
         startTitleEdit(t, title);
       });
-      main.appendChild(title);
+      titleRow.appendChild(title);
+      if (t.recurrence && t.recurrence !== 'none') {
+        const rec = el('span', 'wf-task-flow-recur', '↻');
+        rec.title = `重复：${RECURRENCE_LABEL[t.recurrence]}`;
+        titleRow.appendChild(rec);
+      }
+      main.appendChild(titleRow);
 
       if (t.startDate) {
         main.appendChild(el('div', 'wf-task-flow-carddue', `▶ ${fmtWhen(t.startDate)}`));
@@ -634,15 +748,37 @@ registerWidget({
       if (t.sessionId) {
         main.appendChild(el('div', 'wf-task-flow-carddue', '⚡ 已关联 Session'));
       }
-      const projName = projectName(taskProject(t));
-      const projColor = projectColor(projName);
-      const projTag = el('span', 'wf-task-flow-cardproj', `▸ ${projName}`);
-      projTag.style.color = projColor;
-      projTag.style.borderColor = hexToRgba(projColor, 0.4);
-      projTag.style.background = hexToRgba(projColor, 0.08);
+      const pid = taskProject(t);
+      const projColor = projectColorOf(pid);
+      const projTag = el('span', 'wf-task-flow-cardproj');
+      const projDot = el('span', 'wf-task-flow-cardproj-dot');
+      projDot.style.background = projColor;
+      projDot.style.color = projColor;
+      projTag.append(projDot, document.createTextNode(projectName(pid)));
       main.appendChild(projTag);
 
       card.append(dot, main);
+
+      // 右下角播放按钮：直接启动 Session（已关联则打开）
+      const play = el('button', 'wf-task-flow-play', '▶') as HTMLButtonElement;
+      play.title = t.sessionId ? '打开 Session' : '启动 Session';
+      play.draggable = false;
+      // 不触发卡片拖拽/点击打开详情
+      play.addEventListener('mousedown', (e) => e.stopPropagation());
+      play.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (t.sessionId) {
+          void ctx.api.openSessionInChat(t.sessionId);
+          return;
+        }
+        play.disabled = true;
+        launchTaskSession(t).catch(() => {
+          play.disabled = false;
+        });
+      });
+      card.appendChild(play);
+
       card.addEventListener('click', () => openDetail(t.id));
       return card;
     }
@@ -763,12 +899,18 @@ registerWidget({
 
     /* ---------- detail panel ---------- */
 
+    /** 面板关闭前 flush 未落盘的自动保存（由 openDetail 挂载） */
+    let flushPanelSave: (() => void) | null = null;
+
     function closeDetail(): void {
+      const flush = flushPanelSave;
+      flushPanelSave = null;
+      flush?.();
       panelEl?.remove();
       panelEl = null;
     }
 
-    /** taskId === null → 新建草稿（保存时才真正创建） */
+    /** taskId === null → 新建草稿（首次有标题的自动保存才真正创建） */
     function openDetail(taskId: string | null): void {
       closeDetail();
       const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
@@ -782,7 +924,10 @@ registerWidget({
       panel.addEventListener('click', (e) => e.stopPropagation());
 
       const head = el('div', 'wf-task-flow-panelhead');
-      head.append(el('span', '', isNew ? '新建任务' : '任务详情'));
+      const headLabel = el('span', '', isNew ? '新建任务' : '任务详情');
+      const savedHint = el('span', 'wf-task-flow-saved');
+      if (!isNew) savedHint.textContent = `已保存 ${clockHMS(draft.updatedAt)}`;
+      head.append(headLabel, savedHint);
       const close = el('button', 'wf-task-flow-panelclose', '✕');
       close.addEventListener('click', closeDetail);
       head.appendChild(close);
@@ -817,6 +962,12 @@ registerWidget({
 
       // project
       const projFieldSel = el('select', 'wf-task-flow-select') as HTMLSelectElement;
+      // 默认项目可能不在 listProjects 返回里，补占位选项避免 value 落空串
+      if (!state.projects.some((p) => p.id === DEFAULT_PROJECT_ID)) {
+        const o = el('option', '', '默认') as HTMLOptionElement;
+        o.value = DEFAULT_PROJECT_ID;
+        projFieldSel.appendChild(o);
+      }
       for (const p of state.projects) {
         const o = el('option', '', p.name) as HTMLOptionElement;
         o.value = p.id;
@@ -837,6 +988,16 @@ registerWidget({
       dueInput.value = toLocalInput(draft.dueDate);
       pbody.appendChild(fieldRow('截止', dueInput));
 
+      // recurrence
+      const recurSel = el('select', 'wf-task-flow-select') as HTMLSelectElement;
+      for (const r of RECURRENCE_ORDER) {
+        const o = el('option', '', RECURRENCE_LABEL[r]) as HTMLOptionElement;
+        o.value = r;
+        recurSel.appendChild(o);
+      }
+      recurSel.value = draft.recurrence ?? 'none';
+      pbody.appendChild(fieldRow('重复', recurSel));
+
       // tags
       const tagsInput = el('input', 'wf-task-flow-input') as HTMLInputElement;
       tagsInput.value = draft.tags.join(', ');
@@ -852,24 +1013,133 @@ registerWidget({
       panel.appendChild(pbody);
 
       const foot = el('div', 'wf-task-flow-panelfoot');
-      const saveBtn = el('button', 'wf-task-flow-btn primary', '保存');
-      saveBtn.addEventListener('click', () => {
-        void saveFromPanel();
-      });
-      foot.appendChild(saveBtn);
+      panel.appendChild(foot);
+      root.appendChild(panel);
 
-      if (isNew) {
-        const cancel = el('button', 'wf-task-flow-btn', '取消');
-        cancel.addEventListener('click', closeDetail);
-        foot.appendChild(cancel);
-      } else {
+      /* ----- 保存：自动（debounce 800ms）+ 显式按钮/⌘S ----- */
+      /* 注意：这几个 let 必须先于 renderFoot() 调用声明，否则 TDZ 报错 */
+
+      let saveTimer = 0;
+      let dirty = false;
+      let savedOnce = !isNew;
+
+      renderFoot();
+      titleInput.focus();
+
+      // 所有字段改动后 debounce 800ms 自动保存
+      titleInput.addEventListener('input', scheduleSave);
+      desc.addEventListener('input', scheduleSave);
+      tagsInput.addEventListener('input', scheduleSave);
+      startInput.addEventListener('change', scheduleSave);
+      dueInput.addEventListener('change', scheduleSave);
+      statusSel.addEventListener('change', scheduleSave);
+      prioSel.addEventListener('change', scheduleSave);
+      recurSel.addEventListener('change', scheduleSave);
+      projFieldSel.addEventListener('change', scheduleSave);
+
+      // ⌘S / Ctrl+S 立即保存（事件从输入控件冒泡到面板）
+      panel.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          e.stopPropagation();
+          void saveNow(true);
+        }
+      });
+
+      function fieldRow(label: string, control: HTMLElement): HTMLElement {
+        const row = el('div', 'wf-task-flow-field');
+        row.append(el('label', '', label), control);
+        return row;
+      }
+
+      function collect(): Task {
+        draft.title = titleInput.value.trim() || draft.title || '未命名任务';
+        draft.status = statusSel.value as TaskStatus;
+        draft.priority = prioSel.value as TaskPriority;
+        // 项目下拉无匹配选项时 value 会落空串，兜底回默认项目
+        draft.projectId = projFieldSel.value || DEFAULT_PROJECT_ID;
+        // datetime-local 值是本地时间 YYYY-MM-DDTHH:mm，存 ISO（UTC）
+        draft.startDate = startInput.value ? new Date(startInput.value).toISOString() : undefined;
+        draft.dueDate = dueInput.value ? new Date(dueInput.value).toISOString() : undefined;
+        draft.tags = tagsInput.value
+          .split(/[,，]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        draft.description = desc.value;
+        draft.recurrence = recurSel.value as TaskRecurrence;
+        // 面板里标记完成时补 completedAt（与拖拽到 DONE 列的行为一致）
+        if (draft.status === 'done' && !draft.completedAt) draft.completedAt = new Date().toISOString();
+        return draft;
+      }
+
+      function scheduleSave(): void {
+        dirty = true;
+        if (saveTimer) window.clearTimeout(saveTimer);
+        saveTimer = window.setTimeout(() => {
+          void saveNow();
+        }, 800);
+      }
+
+      /**
+       * 落盘当前草稿。force = 显式保存（按钮/⌘S）：跳过 dirty 检查，
+       * 新任务无标题也按「未命名任务」入库
+       */
+      async function saveNow(force = false): Promise<void> {
+        if (saveTimer) {
+          window.clearTimeout(saveTimer);
+          saveTimer = 0;
+        }
+        if (!force && !dirty) return;
+        dirty = false;
+        collect();
+        // 自动保存时，新任务没有标题不入库
+        if (!force && !savedOnce && !titleInput.value.trim()) return;
+        savedHint.textContent = '保存中…';
+        try {
+          await persist(draft);
+          savedHint.textContent = `已保存 ${clockHMS(Date.now())}`;
+          if (!savedOnce) {
+            savedOnce = true;
+            headLabel.textContent = '任务详情';
+            renderFoot();
+          }
+        } catch {
+          savedHint.textContent = '保存失败';
+        }
+      }
+
+      /** 关闭面板时立即落盘未保存的改动 */
+      flushPanelSave = () => {
+        flushPanelSave = null;
+        if (saveTimer || dirty) void saveNow();
+      };
+
+      function renderFoot(): void {
+        foot.innerHTML = '';
+        const save = el('button', 'wf-task-flow-btn primary', '保存');
+        save.title = '立即保存（⌘S）';
+        save.addEventListener('click', () => {
+          void saveNow(true);
+        });
+        foot.appendChild(save);
+
         const del = el('button', 'wf-task-flow-btn danger', '删除');
         del.addEventListener('click', () => {
+          // 删除前不再 flush
+          flushPanelSave = null;
+          if (saveTimer) window.clearTimeout(saveTimer);
           closeDetail();
-          void removeTask(draft.id);
+          if (savedOnce) void removeTask(draft.id);
         });
         foot.appendChild(del);
 
+        const cancel = el('button', 'wf-task-flow-btn', '取消');
+        cancel.title = '关闭面板（未保存改动会先落盘）';
+        cancel.addEventListener('click', closeDetail);
+        foot.appendChild(cancel);
+
+        // 已落库的任务（含全新草稿首次保存后）才允许启动 Session
+        if (!savedOnce) return;
         if (draft.sessionId) {
           const open = el('button', 'wf-task-flow-btn session', '⚡ 打开 Session');
           open.addEventListener('click', () => {
@@ -884,72 +1154,23 @@ registerWidget({
           foot.appendChild(start);
         }
       }
-      panel.appendChild(foot);
-      root.appendChild(panel);
-      titleInput.focus();
-
-      function fieldRow(label: string, control: HTMLElement): HTMLElement {
-        const row = el('div', 'wf-task-flow-field');
-        row.append(el('label', '', label), control);
-        return row;
-      }
-
-      function collect(): Task {
-        draft.title = titleInput.value.trim() || draft.title || '未命名任务';
-        draft.status = statusSel.value as TaskStatus;
-        draft.priority = prioSel.value as TaskPriority;
-        draft.projectId = projFieldSel.value;
-        // datetime-local 值是本地时间 YYYY-MM-DDTHH:mm，存 ISO（UTC）
-        draft.startDate = startInput.value ? new Date(startInput.value).toISOString() : undefined;
-        draft.dueDate = dueInput.value ? new Date(dueInput.value).toISOString() : undefined;
-        draft.tags = tagsInput.value
-          .split(/[,，]/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-        draft.description = desc.value;
-        return draft;
-      }
-
-      async function saveFromPanel(): Promise<void> {
-        collect();
-        saveBtn.disabled = true;
-        try {
-          await persist(draft);
-          saveBtn.textContent = '已保存 ✓';
-          setTimeout(() => {
-            saveBtn.textContent = '保存';
-            saveBtn.disabled = false;
-          }, 900);
-        } catch {
-          saveBtn.textContent = '保存失败，重试';
-          saveBtn.disabled = false;
-        }
-      }
 
       async function startSession(btn: HTMLButtonElement): Promise<void> {
         collect();
         btn.disabled = true;
         btn.textContent = '启动中…';
+        // launchTaskSession 内部已落盘，关闭时不用再 flush
+        flushPanelSave = null;
+        if (saveTimer) window.clearTimeout(saveTimer);
         try {
-          const payload = JSON.stringify({
-            task: {
-              id: draft.id,
-              title: draft.title,
-              description: draft.description,
-              status: draft.status,
-              priority: draft.priority,
-              startDate: draft.startDate,
-              dueDate: draft.dueDate,
-              tags: draft.tags,
-            },
-            context: '你需要帮我完成这个任务，请基于描述给出执行建议或直接开始。',
-          });
-          const sessionId = await ctx.api.startTaskSession(payload);
-          draft.sessionId = sessionId;
-          await persist(draft);
+          await launchTaskSession(draft);
           closeDetail();
           openDetail(draft.id);
         } catch {
+          flushPanelSave = () => {
+            flushPanelSave = null;
+            if (saveTimer || dirty) void saveNow();
+          };
           btn.textContent = '启动失败，重试';
           btn.disabled = false;
         }

@@ -9,10 +9,11 @@ import type { AppSettings, PromptImage, VaultEntry } from '../shared/types.js';
 import { ACPManager } from './acp.js';
 import { readEvolveLog } from './evolve.js';
 import { startWorkbenchMcp } from './mcpserver.js';
+import { createTray } from './tray.js';
 import { sampleSysStats } from './sysstats.js';
 import { speak, stopSpeaking } from './tts.js';
 import { deleteRadar, listRadars, runRadarNow, saveRadar, startRadarSchedulers, stopRadarSchedulers } from './radar.js';
-import { deleteMode, findMode, getSettings, listModes, saveMode, saveSettings } from './store.js';
+import { deleteMode, findMode, getSettings, listModes, saveMode, saveSettings, setSessionKind } from './store.js';
 import {
   appendFocusRecord,
   deleteEngine,
@@ -173,8 +174,12 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.listSessions, () => acpManager.listSessions());
-  ipcMain.handle(IPC.newSession, () => acpManager.newSession());
+  ipcMain.handle(IPC.newSession, () => acpManager.newSession('chat'));
   ipcMain.handle(IPC.loadSession, (_e, sessionId: string) => acpManager.loadSession(sessionId));
+  ipcMain.handle(IPC.setSessionKind, (_e, p: { sessionId: string; kind: 'chat' | 'auto' }) => {
+    setSessionKind(p.sessionId, p.kind);
+    return acpManager.listSessions();
+  });
   ipcMain.handle(IPC.prompt, async (_e, sessionId: string, text: string, modeId: string | null, image: PromptImage | null) => {
     const mode = findMode(modeId);
     await acpManager.prompt(sessionId, text, mode?.prompt ?? null, image);
@@ -286,6 +291,7 @@ if (!gotLock) {
     createWorkbenchWindow();
     createHomeWindow();
     startStatsLoop();
+    createTray();
 
     // workbench MCP server (self-evolution plane, design-evolve.md E1)
     const mcpUrl = await startWorkbenchMcp({

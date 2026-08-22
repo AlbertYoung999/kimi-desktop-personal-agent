@@ -41,10 +41,45 @@ export function listTasks(): Task[] {
   return readJson<Task[]>('tasks.json', []);
 }
 
+function nextOccurrence(from: Date, recurrence: 'daily' | 'weekly' | 'workdays'): Date {
+  const next = new Date(from);
+  if (recurrence === 'daily') next.setDate(next.getDate() + 1);
+  else if (recurrence === 'weekly') next.setDate(next.getDate() + 7);
+  else {
+    // workdays: skip to the next Mon-Fri
+    do {
+      next.setDate(next.getDate() + 1);
+    } while (next.getDay() === 0 || next.getDay() === 6);
+  }
+  return next;
+}
+
 export function saveTask(task: Task): Task[] {
-  const tasks = listTasks().filter((t) => t.id !== task.id);
+  const all = listTasks();
+  const prev = all.find((t) => t.id === task.id);
+  const tasks = all.filter((t) => t.id !== task.id);
   task.updatedAt = Date.now();
   tasks.unshift(task);
+
+  // recurring task completed → archive it and spawn the next occurrence
+  const recurrence = task.recurrence ?? 'none';
+  const justCompleted = task.status === 'done' && prev?.status !== 'done';
+  if (justCompleted && recurrence !== 'none') {
+    const base = task.dueDate ? new Date(task.dueDate) : new Date();
+    const next: Task = {
+      ...task,
+      id: `task-${Date.now().toString(36)}`,
+      status: 'todo',
+      startDate: undefined,
+      dueDate: nextOccurrence(base, recurrence).toISOString(),
+      completedAt: undefined,
+      sessionId: undefined,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    tasks.unshift(next);
+  }
+
   writeJson('tasks.json', tasks);
   return tasks;
 }

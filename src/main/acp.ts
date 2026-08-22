@@ -8,7 +8,7 @@ import { app } from 'electron';
 import type { WebContents } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { HistoryItem, SessionMeta } from '../shared/types.js';
-import { getSettings, removeSessionFromIndex, upsertSession } from './store.js';
+import { getSessionIndex, getSettings, removeSessionFromIndex, upsertSession } from './store.js';
 import { writeManagedBlock } from './workbench.js';
 
 const PROTOCOL_VERSION = 1;
@@ -312,6 +312,7 @@ export class ACPManager {
   async listSessions(): Promise<SessionMeta[]> {
     const conn = await this.ensureStarted();
     const settings = getSettings();
+    const kindOf = new Map(getSessionIndex().map((s) => [s.sessionId, s.kind] as const));
     try {
       const res = await conn.listSessions({ cwd: settings.workspaceDir });
       return res.sessions.map((s) => ({
@@ -320,6 +321,7 @@ export class ACPManager {
         title: s.title ?? '未命名会话',
         createdAt: s.updatedAt ? Date.parse(s.updatedAt) : Date.now(),
         updatedAt: s.updatedAt ? Date.parse(s.updatedAt) : Date.now(),
+        kind: kindOf.get(s.sessionId) ?? 'auto',
       }));
     } catch (err) {
       console.warn('[acp] session/list failed, falling back to local index:', err);
@@ -328,7 +330,7 @@ export class ACPManager {
     }
   }
 
-  async newSession(): Promise<SessionMeta> {
+  async newSession(kind: 'chat' | 'auto' = 'auto'): Promise<SessionMeta> {
     const conn = await this.ensureStarted();
     const settings = getSettings();
     const res = await conn.newSession({ cwd: settings.workspaceDir, mcpServers: [] });
@@ -340,6 +342,7 @@ export class ACPManager {
       title: '',
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      kind,
     };
     upsertSession(meta);
     return meta;
@@ -355,19 +358,9 @@ export class ACPManager {
     }
   }
 
-  async loadSession(sessionId: string): Promise<{ meta: SessionMeta; history: HistoryItem[] }> {
+  async loadSession(sessionId: string): Promise<{ meta: SessionMeta; history: HistoryItem[]; live?: boolean }> {
     const conn = await this.ensureStarted();
     const settings = getSettings();
-    this.replaying.set(sessionId, []);
-    try {
-      await conn.loadSession({ sessionId, cwd: settings.workspaceDir, mcpServers: [] });
-    } finally {
-      // small grace period for trailing replay notifications
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    const history = this.replaying.get(sessionId) ?? [];
-    this.replaying.delete(sessionId);
-    await this.applySessionConfig(sessionId);
     const meta: SessionMeta = {
       sessionId,
       cwd: settings.workspaceDir,
@@ -375,24 +368,57 @@ export class ACPManager {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+    // A session with an in-flight turn must not be touched AT ALL — both
+    // session/load and session/resume cancel the running turn (verified
+    // against kimi 0.31.1). The chunks already flow to this connection;
+    // just tell the renderer to watch live.
+    if (this.busySessions.has(sessionId)) {
+      return { meta, history: [], live: true };
+    }
+    this.replaying.set(sessionId, []);
+    try {
+      await conn.loadSession({ sessionId, cwd: settings.workspaceDir, mcpServers: [] });
+    } finally {
+      // small grace period for trailing replay notifications
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    const history = (this.replaying.get(sessionId) ?? [])
+      .map((item) => ({
+        ...item,
+        // kimi injects system-reminders into continued turns; they're plumbing, not content
+        text: item.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim(),
+      }))
+      .filter((item) => item.text.length > 0);
+    this.replaying.delete(sessionId);
+    await this.applySessionConfig(sessionId);
     return { meta, history };
   }
 
+  /** sessions with an in-flight prompt turn (load would interrupt them) */
+  private busySessions = new Set<string>();
+
   async prompt(sessionId: string, text: string, modePrompt: string | null, image: { data: string; mimeType: string } | null): Promise<void> {
+    // mark busy synchronously BEFORE any await — loadSession must never race
+    // ahead of this flag and interrupt the turn with a history replay
+    this.busySessions.add(sessionId);
     const conn = await this.ensureStarted();
     const finalText = modePrompt ? `${modePrompt}\n\n用户输入：\n${text}` : text;
     const blocks: acp.ContentBlock[] = [];
     if (image) blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType });
     if (finalText.trim()) blocks.push({ type: 'text', text: finalText });
-    const res = await conn.prompt({ sessionId, prompt: blocks });
-    upsertSession({
-      sessionId,
-      cwd: getSettings().workspaceDir,
-      title: text.slice(0, 30),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-    this.emit(IPC.evTurnDone, { sessionId, stopReason: res.stopReason });
+    try {
+      const res = await conn.prompt({ sessionId, prompt: blocks });
+      upsertSession({
+        sessionId,
+        cwd: getSettings().workspaceDir,
+        title: text.slice(0, 30),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      this.emit(IPC.evTurnDone, { sessionId, stopReason: res.stopReason });
+    } finally {
+      this.busySessions.delete(sessionId);
+    }
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -546,6 +572,27 @@ export class ACPManager {
       list.push(sessionId);
       fs.writeFileSync(file, JSON.stringify(list));
       removeSessionFromIndex(sessionId);
+      // runtime sweep with a grace delay (kimi flushes session storage async);
+      // the startup sweep is the backstop for anything still pending
+      setTimeout(() => this.deleteSessionDir(sessionId), 5 * 60_000).unref();
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  private deleteSessionDir(sessionId: string): void {
+    try {
+      const root = path.join(os.homedir(), '.kimi-code', 'sessions');
+      for (const wd of fs.readdirSync(root)) {
+        const candidate = path.join(root, wd, sessionId);
+        if (fs.existsSync(candidate)) fs.rmSync(candidate, { recursive: true, force: true });
+      }
+      // drop from the trash file once actually deleted
+      const file = path.join(app.getPath('userData'), 'trash-sessions.json');
+      if (fs.existsSync(file)) {
+        const list = (JSON.parse(fs.readFileSync(file, 'utf8')) as string[]).filter((id) => id !== sessionId);
+        fs.writeFileSync(file, JSON.stringify(list));
+      }
     } catch {
       /* best-effort */
     }
@@ -557,13 +604,7 @@ export class ACPManager {
       const file = path.join(app.getPath('userData'), 'trash-sessions.json');
       if (!fs.existsSync(file)) return;
       const list = JSON.parse(fs.readFileSync(file, 'utf8')) as string[];
-      const root = path.join(os.homedir(), '.kimi-code', 'sessions');
-      for (const sessionId of list) {
-        for (const wd of fs.readdirSync(root)) {
-          const candidate = path.join(root, wd, sessionId);
-          if (fs.existsSync(candidate)) fs.rmSync(candidate, { recursive: true, force: true });
-        }
-      }
+      for (const sessionId of list) this.deleteSessionDir(sessionId);
       fs.rmSync(file, { force: true });
     } catch (err) {
       console.warn('[acp] sweep trashed sessions failed:', err);

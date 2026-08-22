@@ -16,6 +16,8 @@ export interface SessionMeta {
   title: string;
   createdAt: number;
   updatedAt: number;
+  /** chat = 用户在对话窗主动创建；auto = 后台/工作台/任务会话（默认） */
+  kind?: 'chat' | 'auto';
 }
 
 export interface AppSettings {
@@ -40,6 +42,8 @@ export interface HistoryItem {
 export interface LoadSessionResult {
   meta: SessionMeta;
   history: HistoryItem[];
+  /** true = session 正在执行中，走 resume 不打断，输出实时流式显示 */
+  live?: boolean;
 }
 
 // ---- streaming events (main -> renderer) ----
@@ -136,6 +140,7 @@ export const IPC = {
   wbActionResult: 'wb:action-result',
   evWbRefresh: 'wb:refresh',
   setSessionAllow: 'acp:set-session-allow',
+  setSessionKind: 'acp:set-session-kind',
   evArtifactUpdated: 'wb:artifact-updated',
   evArtifactProgress: 'wb:artifact-progress',
   wbEvolveLog: 'wb:evolve-log',

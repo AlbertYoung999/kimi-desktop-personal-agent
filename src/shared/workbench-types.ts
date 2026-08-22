@@ -36,6 +36,8 @@ export interface WorkbenchLayout {
 export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'done' | 'canceled';
 export type TaskPriority = 'urgent' | 'high' | 'medium' | 'low';
 
+export type TaskRecurrence = 'none' | 'daily' | 'weekly' | 'workdays';
+
 export interface Task {
   id: string;
   title: string;
@@ -49,6 +51,7 @@ export interface Task {
   tags: string[];
   sessionId?: string; // ACP session created from this task
   projectId?: string; // 挂载的项目；空 = 默认项目
+  recurrence?: TaskRecurrence; // 重复任务频率（默认 none）
   createdAt: number;
   updatedAt: number;
 }
@@ -56,6 +59,7 @@ export interface Task {
 export interface Project {
   id: string;
   name: string;
+  color?: string; // hex，看板上的项目标识色
   createdAt: number;
   updatedAt: number;
 }
