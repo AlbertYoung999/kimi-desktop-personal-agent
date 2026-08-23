@@ -43,7 +43,7 @@ function scopedDocument(host: HTMLElement): Document {
 }
 
 /** innerHTML doesn't execute <script> — recreate them, with document scoped to the host */
-function mountArtifact(host: HTMLElement, html: string): void {
+export function mountArtifact(host: HTMLElement, html: string): void {
   host.innerHTML = html;
   const w = window as unknown as Record<string, unknown>;
   w.__artifactDoc = scopedDocument(host);

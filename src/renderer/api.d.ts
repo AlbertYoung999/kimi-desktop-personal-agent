@@ -61,6 +61,11 @@ export interface WbApi {
   focusHistory(): Promise<FocusRecord[]>;
   agentsRead(): Promise<string>;
   agentsWrite(content: string): Promise<void>;
+  memoryRead(): Promise<string>;
+  memoryWrite(content: string): Promise<void>;
+  toolsList(): Promise<{ name: string; description: string; enabled: boolean }[]>;
+  toolToggle(name: string, enabled: boolean): void;
+  runBackup(): Promise<void>;
   acpAsk(text: string): Promise<string>;
   forgeGenerate(prompt: string): Promise<string>;
   radarList(): Promise<Radar[]>;
@@ -88,10 +93,28 @@ export interface ArtifactProgress {
   item?: { id: string; title: string; html: string };
 }
 
+/** reactive trigger output card (design-v4 §10.4: unified Reaction UI) */
+export interface ReactionCard {
+  id: string;
+  kind: 'info' | 'success' | 'warn';
+  title: string;
+  body?: string;
+  actions?: { label: string; action: string }[]; // action: 'open-widget:<id>' | 'dismiss'
+}
+
+/** generative presentation spec（design-v4 §12） */
+export interface PresentSpec {
+  kind: 'news-digest' | 'data-card' | 'gallery' | 'list' | 'custom';
+  title: string;
+  items?: { title: string; summary?: string; image?: string; url?: string; tag?: string }[];
+  html?: string;
+  actions?: { label: string; action: string }[];
+}
+
 /** tool call forwarded from the workbench MCP server to the renderer */
 export interface WbActionCall {
   requestId: string;
-  action: 'widget_open' | 'widget_close' | 'focus_start';
+  action: 'widget_open' | 'widget_close' | 'focus_start' | 'present_open' | 'present_dismiss';
   params: Record<string, unknown>;
 }
 
@@ -134,18 +157,43 @@ export interface KimiApi {
   onFocusStatus(cb: (status: FocusStatus) => void): void;
   onRadarItems(cb: (p: RadarItemsPush) => void): void;
   homeAsk(text: string): Promise<string>;
+  homeAskImage(text: string, image: PromptImage): Promise<string>;
+  mainHistory(): Promise<{ role: string; text: string; at: number }[]>;
+  mainNew(): Promise<string>;
+  ttsVoices(): Promise<{
+    voices: string[];
+    selectedEn: string;
+    selectedZh: string;
+    rate: string;
+    provider: string;
+    piperVoices: { id: string; label: string; cjk: boolean }[];
+    piperEn: string;
+    piperZh: string;
+  }>;
+  ttsSetVoice(en: string, zh: string, rate: string): void;
+  ttsSetProvider(provider: 'piper' | 'say'): void;
+  ttsSetPiperVoice(en: string, zh: string): void;
+  ttsPreview(voice: string, cjk: boolean): Promise<void>;
+  desktopSources(): Promise<{ id: string; name: string; thumbnail: string }[]>;
+  onReactionCard(cb: (card: ReactionCard) => void): void;
   toggleHome(): void;
-  ttsSpeak(text: string): Promise<void>;
+  ttsSpeak(text: string, lang?: 'zh' | 'en'): Promise<void>;
   ttsStop(): void;
   onSysStats(cb: (stats: SysStats) => void): void;
   onWbAction(cb: (call: WbActionCall) => void): void;
-  wbActionResult(payload: { requestId: string; message: string }): Promise<void>;
+  wbRegisterWidgets(defs: { id: string; name: string; description: string }[]): void;
+  wbActionResult(payload: { requestId: string; message: string }): void;
   onWbRefresh(cb: (p: { kind: 'tasks' | 'radars' }) => void): void;
   setSessionAllow(sessionId: string, allowed: boolean): void;
   setSessionKind(sessionId: string, kind: 'chat' | 'auto'): Promise<SessionMeta[]>;
   onArtifactUpdated(cb: (item: { id: string; title: string; html: string }) => void): void;
+  onPresentArtifact(cb: (spec: PresentSpec) => void): void;
+  onPresentOpen(cb: (target: { target: string }) => void): void;
+  onPresentDismiss(cb: (target: { target: string }) => void): void;
   onArtifactProgress(cb: (p: ArtifactProgress) => void): void;
   onWbNotify(cb: (n: { kind: 'success' | 'error' | 'info'; message: string }) => void): void;
+  onMainSession(cb: (p: { sessionId: string }) => void): void;
+  setThinking(on: boolean): Promise<void>;
   wbEvolveLog(): Promise<{ at: number; tool: string; params: Record<string, unknown>; result: string }[]>;
   wb: WbApi;
 

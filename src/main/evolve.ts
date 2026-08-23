@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { getDb } from './db.js';
+import { recordSignal } from './signals.js';
 import { wbRoot } from './workbench.js';
 
 /**
@@ -31,6 +33,7 @@ function logDir(): string {
 
 export function logEvolve(entry: EvolveEntry): void {
   fs.appendFileSync(path.join(logDir(), 'evolve.jsonl'), JSON.stringify(entry) + '\n');
+  recordSignal('evolve', `${entry.tool}: ${entry.result.slice(0, 80)}`);
 }
 
 export function readEvolveLog(limit = 50): EvolveEntry[] {
@@ -100,6 +103,23 @@ export function undoLast(): { message: string; restoredFiles: string[] } {
   const frame = stack.pop();
   if (!frame) return { message: '没有可撤销的操作', restoredFiles: [] };
   for (const snap of frame.snapshots) {
+    if (snap.file.startsWith('db://')) {
+      // data_exec 的行级快照：回插到对应表
+      try {
+        const table = snap.file.slice(5);
+        const rows = JSON.parse(snap.content ?? '[]') as Record<string, unknown>[];
+        const db = getDb();
+        for (const row of rows) {
+          const cols = Object.keys(row);
+          db.prepare(`INSERT OR REPLACE INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(
+            ...cols.map((c) => row[c]),
+          );
+        }
+      } catch {
+        /* best-effort restore */
+      }
+      continue;
+    }
     if (snap.content === null) fs.rmSync(snap.file, { force: true });
     else {
       fs.mkdirSync(path.dirname(snap.file), { recursive: true });

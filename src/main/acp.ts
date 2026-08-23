@@ -8,8 +8,11 @@ import { app } from 'electron';
 import type { WebContents } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { HistoryItem, SessionMeta } from '../shared/types.js';
-import { getSessionIndex, getSettings, removeSessionFromIndex, upsertSession } from './store.js';
-import { writeManagedBlock } from './workbench.js';
+import { getSessionIndex, getSettings, removeSessionFromIndex, saveSettings, upsertSession } from './store.js';
+import { CAPABILITIES } from './capabilities.js';
+import { systemDigest } from './digest.js';
+import { recentDigest } from './signals.js';
+import { ensureMemoryFile, memoryPath, readMemory, writeManagedBlock } from './workbench.js';
 
 const PROTOCOL_VERSION = 1;
 
@@ -38,9 +41,6 @@ export class ACPManager {
   /** toolCallId → last known title (updates often arrive without one) */
   private toolTitles = new Map<string, string>();
   /** dedicated session for workbench quick-ask (Command Center fallback) */
-  private workbenchSessionId: string | null = null;
-  /** dedicated session for the voice-first home page */
-  private homeSessionId: string | null = null;
   /** workbench MCP server url, mounted on the command-center session */
   private workbenchMcpUrl: string | null = null;
 
@@ -113,32 +113,76 @@ export class ACPManager {
     console.log('[acp] connected, cwd =', settings.workspaceDir);
   }
 
+  /** AGENTS.md 的 managed 区：静态约定 + 从能力清单动态生成的工具一览 */
+  private buildManagedContent(): string {
+    const disabled = new Set(getSettings().disabledTools ?? []);
+    const toolLines = CAPABILITIES.filter((c) => !disabled.has(c.name)).map(
+      (c) => `- \`${c.name}\`：${c.description}${c.usage ? `（${c.usage}）` : ''}`,
+    );
+    return [
+      '# Kimi 桌面助手工作区约定',
+      '',
+      '用户通过桌面悬浮窗与你对话。除了回答问题时，你还承担「收藏夹 / 灵感记录」的职责：',
+      '',
+      '- 当用户说「收藏」「记下来」「记一下」「这个想法不错」等类似意图时，把内容整理成一条 markdown 记录，写入 `vault/` 目录。',
+      '- 文件按类别分目录（如 `vault/ideas/`、`vault/to-read/`、`vault/notes/`），文件名用日期+简短 slug，例如 `vault/ideas/2026-08-05-desktop-pet.md`。',
+      '- 文件内容用 markdown：一级标题即主题，正文简洁，保留用户给的原始链接。',
+      '- 记录后简短回复：已收藏到哪个文件。若用户想修改某条记录，直接编辑对应文件。',
+      '',
+      '## 长期记忆（memory.md）',
+      '',
+      `你的长期记忆保存在 ${memoryPath()}（对话时会作为 [长期记忆] 注入你的上下文）。`,
+      '',
+      '- 当用户透露值得长期记住的信息（偏好、习惯、重要事实、明确要求「记住」的内容）时，把该文件追加一条简短条目（`- [YYYY-MM-DD] 内容`）。',
+      '- 保持条目精炼；过时或用户要求遗忘的信息及时删除或更新。',
+      '- 不要把临时对话细节写进去——只记长期有用的。',
+      '',
+      '## 呈现协议（Generative Presentation）',
+      '',
+      '你可以通过 workbench 的 MCP 工具把结果「做给用户看」，而不只是文字回复：',
+      '',
+      '- **什么时候呈现**：新闻/榜单/数据对比/调研结果/多条目信息——凡是有结构、值得看的内容，都应该 `present_artifact` 生成卡片，同时用一句话语音/文字总结。纯闲聊、单句回答不需要呈现。',
+      '- **present_artifact 的 spec**：`kind`（news-digest=新闻列表 / data-card=数据卡 / gallery=图片网格 / list=通用列表 / custom=自由HTML）+ `title` + `items[{title, summary?, image?, url?, tag?}]` + 可选 `actions[{label, action}]`。规则：',
+      '  - items 最多 7 条（少而精），title 一行、summary 两行以内；',
+      '  - image 只用真实可访问的 http(s) URL，不要编造；',
+      '  - 拿不准用哪个 kind 就用 list；模板满足不了再用 custom。',
+      '- **present**：用户说「打开 xxx」时调用，在 Zen 挂出组件；没有该组件时先创建再打开。',
+      '- **dismiss**：用户说「关掉 xxx / 关掉刚才那个」时调用，`target` 传名称或 `latest`。',
+      '- 呈现后告诉用户卡片已在 Zen 打开；用户不满意时，你可以调整 spec 重新呈现。',
+      '',
+      '## Widget Forge 生成约定',
+      '',
+      '当用户通过 Widget Forge 请求生成 widget 时：',
+      '',
+      '- 输出单个自包含 HTML 片段（内联 <style>/<script>，无外部依赖），用 ```html 围栏包裹，首行 `<!-- title: 名称 -->`。',
+      '- **不要把代码写入文件**，最终代码必须直接输出在回复正文里（围栏内）；可以用工具验证数据源的可用性，但不要落盘任何文件。',
+      '- 它就是一个普通的独立 widget，**放手做**：宿主已放开跨域限制，可以用 fetch 调任何公开免费的数据源（股票、天气、汇率、API 等），优先真实数据。',
+      '- **不要预设限制**——不要因为"可能跨域/可能需要 key"就拒绝尝试或只给静态演示；把加载态、错误态、重试按钮做进 widget 里，运行时出问题用户在界面上能看到。',
+      '- 结构清晰，便于后续差量微调。',
+      '',
+      '## 数据访问（Agent Loop）',
+      '',
+      '所有业务数据在 jarvis.db（SQLite）里，别猜结构、别碰 JSON 文件：',
+      '',
+      '1. 先看结构：`data_schema()`（表/列/行数）',
+      '2. 再查数据：`data_query("SELECT …")`（只读，覆盖 tasks/radar_items/radars/library/projects/engines/signals）',
+      '3. 改数据：纯字段修正（改标题/标已读/调优先级/删条目）→ `data_exec`（UPDATE/DELETE 必须带 WHERE）；带行为的操作（创建任务/完成重复任务/建雷达/呈现/改组件）→ 用对应的专用工具',
+      '4. 你的每次修改都会记录并可撤销（evolve_undo），放心做、做错了也能回滚',
+      '',
+      '## 可用系统工具（当前启用）',
+      '',
+      '以下工具通过 workbench MCP 提供，回答「系统里有什么」先用 `system_query` 查实时数据，不要猜：',
+      '',
+      ...toolLines,
+      '',
+    ].join('\n');
+  }
+
   /** Drop AGENTS.md + vault dir into the workspace so the agent knows the vault convention. */
   private ensureWorkspaceScaffold(workspaceDir: string): void {
     fs.mkdirSync(path.join(workspaceDir, 'vault'), { recursive: true });
-    writeManagedBlock(
-      workspaceDir,
-      [
-        '# Kimi 桌面助手工作区约定',
-        '',
-        '用户通过桌面悬浮窗与你对话。除了回答问题时，你还承担「收藏夹 / 灵感记录」的职责：',
-        '',
-        '- 当用户说「收藏」「记下来」「记一下」「这个想法不错」等类似意图时，把内容整理成一条 markdown 记录，写入 `vault/` 目录。',
-        '- 文件按类别分目录（如 `vault/ideas/`、`vault/to-read/`、`vault/notes/`），文件名用日期+简短 slug，例如 `vault/ideas/2026-08-05-desktop-pet.md`。',
-        '- 文件内容用 markdown：一级标题即主题，正文简洁，保留用户给的原始链接。',
-        '- 记录后简短回复：已收藏到哪个文件。若用户想修改某条记录，直接编辑对应文件。',
-        '',
-        '## Widget Forge 生成约定',
-        '',
-        '当用户通过 Widget Forge 请求生成 widget 时：',
-        '',
-        '- 输出单个自包含 HTML 片段（内联 <style>/<script>，无外部依赖），用 ```html 围栏包裹，首行 `<!-- title: 名称 -->`。',
-        '- **不要把代码写入文件**，最终代码必须直接输出在回复正文里（围栏内）；可以用工具验证数据源的可用性，但不要落盘任何文件。',
-        '- 它就是一个普通的独立 widget，**放手做**：宿主已放开跨域限制，可以用 fetch 调任何公开免费的数据源（股票、天气、汇率、API 等），优先真实数据。',
-        '- **不要预设限制**——不要因为"可能跨域/可能需要 key"就拒绝尝试或只给静态演示；把加载态、错误态、重试按钮做进 widget 里，运行时出问题用户在界面上能看到。',
-        '- 结构清晰，便于后续差量微调。',
-      ].join('\n'),
-    );
+    ensureMemoryFile();
+    writeManagedBlock(workspaceDir, this.buildManagedContent());
   }
 
   private makeClient(): acp.Client {
@@ -147,8 +191,13 @@ export class ACPManager {
         const update = params.update;
         switch (update.sessionUpdate) {
           case 'user_message_chunk': {
+            const text = chunkText(update);
             if (this.replaying.has(params.sessionId)) {
               this.appendReplay(params.sessionId, 'user', chunkText(update));
+            } else if (text) {
+              // live user message from another surface (zen / command center) —
+              // forward so every window sees the full conversation
+              this.emit(IPC.evChunk, { sessionId: params.sessionId, kind: 'user', text });
             }
             break;
           }
@@ -313,6 +362,7 @@ export class ACPManager {
     const conn = await this.ensureStarted();
     const settings = getSettings();
     const kindOf = new Map(getSessionIndex().map((s) => [s.sessionId, s.kind] as const));
+    const mainId = settings.mainSessionId;
     try {
       const res = await conn.listSessions({ cwd: settings.workspaceDir });
       return res.sessions.map((s) => ({
@@ -322,6 +372,7 @@ export class ACPManager {
         createdAt: s.updatedAt ? Date.parse(s.updatedAt) : Date.now(),
         updatedAt: s.updatedAt ? Date.parse(s.updatedAt) : Date.now(),
         kind: kindOf.get(s.sessionId) ?? 'auto',
+        main: s.sessionId === mainId || undefined,
       }));
     } catch (err) {
       console.warn('[acp] session/list failed, falling back to local index:', err);
@@ -333,7 +384,13 @@ export class ACPManager {
   async newSession(kind: 'chat' | 'auto' = 'auto'): Promise<SessionMeta> {
     const conn = await this.ensureStarted();
     const settings = getSettings();
-    const res = await conn.newSession({ cwd: settings.workspaceDir, mcpServers: [] });
+    // user-facing chat sessions get the workbench MCP too — any surface is a
+    // system agent with the same capability plane (design-v4 §11)
+    const mcpServers =
+      kind === 'chat' && this.workbenchMcpUrl
+        ? [{ type: 'http' as const, name: 'workbench', url: this.workbenchMcpUrl, headers: [] }]
+        : [];
+    const res = await conn.newSession({ cwd: settings.workspaceDir, mcpServers });
     this.registerSessionCwd(res.sessionId, settings.workspaceDir);
     await this.applySessionConfig(res.sessionId);
     const meta: SessionMeta = {
@@ -355,6 +412,26 @@ export class ACPManager {
       await this.conn.setSessionConfigOption({ sessionId, configId: 'mode', value: mode });
     } catch (err) {
       console.warn('[acp] set_config_option(mode) failed:', err);
+    }
+    const thinking = getSettings().thinking;
+    if (thinking !== undefined) {
+      try {
+        await this.conn.setSessionConfigOption({ sessionId, configId: 'thinking', value: thinking ? 'high' : 'low' });
+      } catch {
+        /* older kimi without thinking config */
+      }
+    }
+  }
+
+  /** 切换主会话的 thinking 模式（即时生效 + 持久化） */
+  async setThinking(on: boolean): Promise<void> {
+    saveSettings({ thinking: on });
+    if (this.mainSessionId && this.conn) {
+      try {
+        await this.conn.setSessionConfigOption({ sessionId: this.mainSessionId, configId: 'thinking', value: on ? 'high' : 'low' });
+      } catch (err) {
+        console.warn('[acp] set thinking failed:', err);
+      }
     }
   }
 
@@ -432,63 +509,124 @@ export class ACPManager {
     else this.sessionAllow.delete(sessionId);
   }
 
-  /** Quick-ask from the workbench Command Center: reuses a dedicated session
-   *  with the workbench MCP server mounted (native tool calling). */
-  /** Prompt a managed session; if the session's on-disk state is corrupted
-   *  (e.g. storage append failed), recreate the session and retry once. */
-  private promptManaged(kind: 'workbench' | 'home', sid: string, text: string, retried: boolean): void {
-    void this.prompt(sid, text, null, null).catch(async (err) => {
-      const message = String(err);
-      const corrupted = /storage append|does not exist|Internal error/i.test(message);
-      if (corrupted && !retried) {
-        console.warn(`[acp] ${kind} session ${sid} corrupted, recreating:`, message);
-        if (kind === 'workbench') this.workbenchSessionId = null;
-        else this.homeSessionId = null;
-        try {
-          const newSid = await (kind === 'workbench' ? this.newWorkbenchSession() : this.newHomeSession());
-          this.promptManaged(kind, newSid, text, true);
-          return;
-        } catch (err2) {
-          console.warn('[acp] session recreate failed:', err2);
-        }
-      }
-      this.emit(IPC.evChunk, { sessionId: sid, kind: 'text', text: `⚠ ${message}` });
-      this.emit(IPC.evTurnDone, { sessionId: sid, stopReason: 'error' });
-    });
-  }
+  // ---- resident main session (design-v4 §10.1): voice + command center share
+  // one long-lived session, serialized (kimi rejects concurrent prompts per session)
 
-  private async newWorkbenchSession(): Promise<string> {
-    const conn = await this.ensureStarted();
-    const mcpServers = this.workbenchMcpUrl
+  private mainSessionId: string | null = getSettings().mainSessionId ?? null;
+  private mainQueue: Promise<void> = Promise.resolve();
+
+  /** workbench MCP server list for session attach (new / resume) */
+  private workbenchMcpServers(): { type: 'http'; name: string; url: string; headers: [] }[] {
+    return this.workbenchMcpUrl
       ? [{ type: 'http' as const, name: 'workbench', url: this.workbenchMcpUrl, headers: [] }]
       : [];
-    const res = await conn.newSession({ cwd: getSettings().workspaceDir, mcpServers });
-    this.registerSessionCwd(res.sessionId, getSettings().workspaceDir);
-    this.workbenchSessionId = res.sessionId;
-    await this.applySessionConfig(res.sessionId);
-    return res.sessionId;
   }
 
-  private async newHomeSession(): Promise<string> {
+  private async newMainSession(): Promise<string> {
     const conn = await this.ensureStarted();
-    const res = await conn.newSession({ cwd: getSettings().workspaceDir, mcpServers: [] });
+    const res = await conn.newSession({ cwd: getSettings().workspaceDir, mcpServers: this.workbenchMcpServers() });
     this.registerSessionCwd(res.sessionId, getSettings().workspaceDir);
-    this.homeSessionId = res.sessionId;
+    this.mainSessionId = res.sessionId;
+    saveSettings({ mainSessionId: res.sessionId });
+    this.emit(IPC.evMainSession, { sessionId: res.sessionId }); // 渲染层同步主会话 id（防缓存过期）
     await this.applySessionConfig(res.sessionId);
+    this.mainAttached = true;
     return res.sessionId;
   }
 
-  async workbenchAsk(text: string): Promise<string> {
-    const sid = this.workbenchSessionId ?? (await this.newWorkbenchSession());
-    this.promptManaged('workbench', sid, text, false);
+  /** wrap user text with long-term memory + recent signals + live system state */
+  private withMemory(text: string): string {
+    const parts: string[] = [];
+    const digest = systemDigest();
+    parts.push(`[系统状态]\n${digest}`);
+    const mem = readMemory();
+    if (mem) parts.push(`[长期记忆 memory.md]\n${mem}`);
+    const signals = recentDigest();
+    if (signals) parts.push(`[近期系统信号]\n${signals}`);
+    parts.push(`[用户输入]\n${text}`);
+    return parts.join('\n\n');
+  }
+
+  private enqueueMain(sid: string, text: string, image?: { data: string; mimeType: string } | null): void {
+    this.mainQueue = this.mainQueue
+      .then(async () => {
+        try {
+          await this.prompt(sid, this.withMemory(text), null, image ?? null);
+        } catch (err) {
+          const message = String(err);
+          const corrupted = /storage append|does not exist|Internal error/i.test(message);
+          if (corrupted) {
+            console.warn(`[acp] main session ${sid} corrupted, recreating:`, message);
+            const newSid = await this.newMainSession();
+            await this.prompt(newSid, this.withMemory(text), null, image ?? null);
+          } else {
+            this.emit(IPC.evChunk, { sessionId: sid, kind: 'text', text: `⚠ ${message}` });
+            this.emit(IPC.evTurnDone, { sessionId: sid, stopReason: 'error' });
+          }
+        }
+      })
+      .catch(() => {});
+  }
+
+  /** Main session history for the shared log (seed on startup). */
+  async getMainHistory(): Promise<{ role: 'user' | 'agent'; text: string; at: number }[]> {
+    const sid = getSettings().mainSessionId;
+    if (!sid) return [];
+    try {
+      const { history } = await this.loadSession(sid);
+      this.mainAttached = true; // load 也算 attach 过
+      return history.map((h) => ({ role: h.role, text: h.text, at: Date.now() }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** /new: rotate to a fresh main session. */
+  async newMainSessionFresh(): Promise<string> {
+    return this.newMainSession();
+  }
+
+  /** Command Center / voice 共用入口：route 到常驻主会话 */
+  private mainAttached = false;
+
+  private async mainAsk(text: string, image?: { data: string; mimeType: string } | null): Promise<string> {
+    let sid = this.mainSessionId ?? (await this.newMainSession());
+    if (!this.mainAttached) {
+      // 持久化的主会话来自上一个 kimi 进程——prompt 前必须先 attach，
+      // 否则报 Unknown sessionId。attach 失败（会话已被清理）就换新的。
+      try {
+        const conn = await this.ensureStarted();
+        // resume 也必须带上 MCP——否则恢复的主会话没有 workbench 工具，
+        // agent 会退化成用 Bash 硬试（实测踩坑）
+        await conn.resumeSession({
+          sessionId: sid,
+          cwd: getSettings().workspaceDir,
+          mcpServers: this.workbenchMcpServers(),
+        });
+        this.registerSessionCwd(sid, getSettings().workspaceDir);
+      } catch {
+        console.warn('[acp] persisted main session gone, creating a new one');
+        sid = await this.newMainSession();
+      }
+      this.mainAttached = true;
+    }
+    this.enqueueMain(sid, text, image);
     return sid;
   }
 
-  /** Home page ask: dedicated session, same streaming pattern. */
+  /** Quick-ask from the workbench Command Center. */
+  async workbenchAsk(text: string): Promise<string> {
+    return this.mainAsk(text);
+  }
+
+  /** Home page ask: same resident session — one continuous mind. */
   async homeAsk(text: string): Promise<string> {
-    const sid = this.homeSessionId ?? (await this.newHomeSession());
-    this.promptManaged('home', sid, text, false);
-    return sid;
+    return this.mainAsk(text);
+  }
+
+  /** Voice/vision ask with an image frame (phone video vision mode). */
+  async homeAskImage(text: string, image: { data: string; mimeType: string }): Promise<string> {
+    return this.mainAsk(text, image);
   }
 
   /** Create a fresh ACP session seeded with a task's JSON context (Task Flow → Session). */

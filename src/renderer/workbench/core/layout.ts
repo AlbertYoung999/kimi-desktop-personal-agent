@@ -67,6 +67,13 @@ export async function initLayout(): Promise<void> {
   });
 }
 
+/** Recompute canvas geometry — call when the dashboard page becomes visible
+ *  again (it was display:none, so clientWidth/Height were 0). */
+export function refreshStage(): void {
+  updateCanvasSize();
+  syncStageScroll();
+}
+
 // ---------- render ----------
 
 function renderWidget(inst: WidgetInstance): void {

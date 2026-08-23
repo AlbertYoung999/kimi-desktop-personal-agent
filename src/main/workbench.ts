@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { getDb } from './db.js';
 import type { FocusRecord, Project, SearchEngine, Task, WorkbenchLayout } from '../shared/workbench-types.js';
 import { DEFAULT_PROJECT_ID } from '../shared/workbench-types.js';
 
@@ -19,10 +20,13 @@ function readJson<T>(rel: string, fallback: T): T {
   }
 }
 
+/** atomic write: tmp file + rename, so a crash mid-write never corrupts data */
 function writeJson(rel: string, value: unknown): void {
   const p = path.join(wbRoot(), rel);
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(value, null, 2));
+  const tmp = `${p}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  fs.renameSync(tmp, p);
 }
 
 // ---------- layout ----------
@@ -37,8 +41,30 @@ export function saveLayout(layout: WorkbenchLayout): void {
 
 // ---------- tasks ----------
 
+// ---------- tasks (SQLite, design-data-plane §2) ----------
+
+interface TaskRow {
+  id: string; title: string; description: string; status: string; priority: string;
+  start_date: string | null; due_date: string | null; completed_at: string | null;
+  notes: string; tags: string; project_id: string | null; recurrence: string;
+  session_id: string | null; created_at: number; updated_at: number;
+}
+
+function rowToTask(r: TaskRow): Task {
+  return {
+    id: r.id, title: r.title, description: r.description,
+    status: r.status as Task['status'], priority: r.priority as Task['priority'],
+    startDate: r.start_date ?? undefined, dueDate: r.due_date ?? undefined,
+    completedAt: r.completed_at ?? undefined, notes: r.notes,
+    tags: JSON.parse(r.tags || '[]') as string[], projectId: r.project_id ?? undefined,
+    recurrence: r.recurrence as Task['recurrence'], sessionId: r.session_id ?? undefined,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
 export function listTasks(): Task[] {
-  return readJson<Task[]>('tasks.json', []);
+  const rows = getDb().prepare('SELECT * FROM tasks ORDER BY updated_at DESC').all() as TaskRow[];
+  return rows.map(rowToTask);
 }
 
 function nextOccurrence(from: Date, recurrence: 'daily' | 'weekly' | 'workdays'): Date {
@@ -46,7 +72,6 @@ function nextOccurrence(from: Date, recurrence: 'daily' | 'weekly' | 'workdays')
   if (recurrence === 'daily') next.setDate(next.getDate() + 1);
   else if (recurrence === 'weekly') next.setDate(next.getDate() + 7);
   else {
-    // workdays: skip to the next Mon-Fri
     do {
       next.setDate(next.getDate() + 1);
     } while (next.getDay() === 0 || next.getDay() === 6);
@@ -55,11 +80,17 @@ function nextOccurrence(from: Date, recurrence: 'daily' | 'weekly' | 'workdays')
 }
 
 export function saveTask(task: Task): Task[] {
-  const all = listTasks();
-  const prev = all.find((t) => t.id === task.id);
-  const tasks = all.filter((t) => t.id !== task.id);
+  const d = getDb();
+  const prev = d.prepare('SELECT status FROM tasks WHERE id = ?').get(task.id) as { status: string } | undefined;
   task.updatedAt = Date.now();
-  tasks.unshift(task);
+  d.prepare(`INSERT OR REPLACE INTO tasks (id,title,description,status,priority,start_date,due_date,completed_at,notes,tags,project_id,recurrence,session_id,created_at,updated_at)
+    VALUES (@id,@title,@description,@status,@priority,@startDate,@dueDate,@completedAt,@notes,@tags,@projectId,@recurrence,@sessionId,@createdAt,@updatedAt)`).run({
+    id: task.id, title: task.title, description: task.description, status: task.status, priority: task.priority,
+    startDate: task.startDate ?? null, dueDate: task.dueDate ?? null, completedAt: task.completedAt ?? null,
+    notes: task.notes, tags: JSON.stringify(task.tags ?? []), projectId: task.projectId ?? null,
+    recurrence: task.recurrence ?? 'none', sessionId: task.sessionId ?? null,
+    createdAt: task.createdAt, updatedAt: task.updatedAt,
+  });
 
   // recurring task completed → archive it and spawn the next occurrence
   const recurrence = task.recurrence ?? 'none';
@@ -77,49 +108,46 @@ export function saveTask(task: Task): Task[] {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    tasks.unshift(next);
+    saveTask(next);
   }
-
-  writeJson('tasks.json', tasks);
-  return tasks;
+  return listTasks();
 }
 
 export function deleteTask(id: string): Task[] {
-  const tasks = listTasks().filter((t) => t.id !== id);
-  writeJson('tasks.json', tasks);
-  return tasks;
+  getDb().prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  return listTasks();
 }
 
-// ---------- projects ----------
+// ---------- projects (SQLite) ----------
 
 export function listProjects(): Project[] {
-  const projects = readJson<Project[]>('projects.json', []);
-  if (!projects.some((p) => p.id === DEFAULT_PROJECT_ID)) {
+  const d = getDb();
+  const rows = d.prepare('SELECT * FROM projects ORDER BY created_at').all() as (Project & { color: string | null })[];
+  if (!rows.some((p) => p.id === DEFAULT_PROJECT_ID)) {
     const now = Date.now();
-    projects.unshift({ id: DEFAULT_PROJECT_ID, name: '默认', createdAt: now, updatedAt: now });
-    writeJson('projects.json', projects);
+    d.prepare('INSERT OR IGNORE INTO projects (id,name,color,created_at,updated_at) VALUES (?,?,?,?,?)').run(
+      DEFAULT_PROJECT_ID, '默认', null, now, now,
+    );
+    return listProjects();
   }
-  return projects;
+  return rows.map((p) => ({ ...p, color: p.color ?? undefined }));
 }
 
 export function saveProject(project: Project): Project[] {
-  const projects = listProjects().filter((p) => p.id !== project.id);
   project.updatedAt = Date.now();
-  projects.push(project);
-  writeJson('projects.json', projects);
-  return projects;
+  getDb().prepare('INSERT OR REPLACE INTO projects (id,name,color,created_at,updated_at) VALUES (?,?,?,?,?)').run(
+    project.id, project.name, project.color ?? null, project.createdAt, project.updatedAt,
+  );
+  return listProjects();
 }
 
 export function deleteProject(id: string): Project[] {
   if (id === DEFAULT_PROJECT_ID) return listProjects(); // 默认项目不可删除
-  const projects = listProjects().filter((p) => p.id !== id);
-  writeJson('projects.json', projects);
+  const d = getDb();
+  d.prepare('DELETE FROM projects WHERE id = ?').run(id);
   // 该项目下的任务回落到默认项目
-  const tasks = listTasks().map((t) =>
-    t.projectId === id ? { ...t, projectId: DEFAULT_PROJECT_ID, updatedAt: Date.now() } : t,
-  );
-  writeJson('tasks.json', tasks);
-  return projects;
+  d.prepare('UPDATE tasks SET project_id = ?, updated_at = ? WHERE project_id = ?').run(DEFAULT_PROJECT_ID, Date.now(), id);
+  return listProjects();
 }
 
 // ---------- search engines ----------
@@ -133,42 +161,39 @@ const BUILTIN_ENGINES: SearchEngine[] = [
   { id: 'pinterest', name: 'Pinterest', template: 'https://www.pinterest.com/search/pins/?q=%s', group: '图片', enabled: false, builtin: true },
 ];
 
-interface EnginesFile {
-  overrides: Record<string, SearchEngine>;
-  deletedBuiltinIds: string[];
+// engines 全部入库（首次启动种子化内置引擎，之后统一读写 DB）
+
+interface EngineRow {
+  id: string; name: string; template: string; grp: string | null; enabled: number; builtin: number;
 }
 
-function readEnginesFile(): EnginesFile {
-  const raw = readJson<Partial<EnginesFile>>('engines.json', {});
-  return { overrides: raw.overrides ?? {}, deletedBuiltinIds: raw.deletedBuiltinIds ?? [] };
+function rowToEngine(r: EngineRow): SearchEngine {
+  return { id: r.id, name: r.name, template: r.template, group: r.grp ?? '', enabled: r.enabled === 1, builtin: r.builtin === 1 };
+}
+
+function seedEngines(): void {
+  const d = getDb();
+  const count = (d.prepare('SELECT COUNT(*) AS c FROM engines').get() as { c: number }).c;
+  if (count > 0) return;
+  const ins = d.prepare('INSERT OR IGNORE INTO engines (id,name,template,grp,enabled,builtin) VALUES (?,?,?,?,?,?)');
+  for (const e of BUILTIN_ENGINES) ins.run(e.id, e.name, e.template, e.group, e.enabled ? 1 : 0, 1);
 }
 
 export function listEngines(): SearchEngine[] {
-  const file = readEnginesFile();
-  const merged = BUILTIN_ENGINES.filter((e) => !file.deletedBuiltinIds.includes(e.id)).map(
-    (e) => file.overrides[e.id] ?? e,
-  );
-  for (const [id, e] of Object.entries(file.overrides)) {
-    if (!BUILTIN_ENGINES.some((b) => b.id === id)) merged.push(e);
-  }
-  return merged;
+  seedEngines();
+  const rows = getDb().prepare('SELECT * FROM engines').all() as EngineRow[];
+  return rows.map(rowToEngine);
 }
 
 export function saveEngine(engine: SearchEngine): SearchEngine[] {
-  const file = readEnginesFile();
-  file.overrides[engine.id] = engine;
-  file.deletedBuiltinIds = file.deletedBuiltinIds.filter((id) => id !== engine.id);
-  writeJson('engines.json', file);
+  getDb().prepare('INSERT OR REPLACE INTO engines (id,name,template,grp,enabled,builtin) VALUES (?,?,?,?,?,?)').run(
+    engine.id, engine.name, engine.template, engine.group, engine.enabled ? 1 : 0, engine.builtin ? 1 : 0,
+  );
   return listEngines();
 }
 
 export function deleteEngine(id: string): SearchEngine[] {
-  const file = readEnginesFile();
-  delete file.overrides[id];
-  if (BUILTIN_ENGINES.some((b) => b.id === id) && !file.deletedBuiltinIds.includes(id)) {
-    file.deletedBuiltinIds.push(id);
-  }
-  writeJson('engines.json', file);
+  getDb().prepare('DELETE FROM engines WHERE id = ?').run(id);
   return listEngines();
 }
 
@@ -203,30 +228,59 @@ export interface LibraryItem {
   createdAt: number;
 }
 
+// ---------- library (SQLite) ----------
+
 export function listLibrary(): LibraryItem[] {
-  return readJson<LibraryItem[]>('library.json', []);
+  const rows = getDb().prepare('SELECT * FROM library ORDER BY created_at DESC').all() as LibraryItem[];
+  return rows;
 }
 
 export function addLibraryItem(item: LibraryItem): LibraryItem[] {
-  const list = listLibrary().filter((i) => i.id !== item.id);
-  list.unshift(item);
-  writeJson('library.json', list);
-  return list;
+  getDb().prepare('INSERT OR REPLACE INTO library (id,title,html,created_at) VALUES (?,?,?,?)').run(
+    item.id, item.title, item.html, item.createdAt,
+  );
+  return listLibrary();
 }
 
 export function deleteLibraryItem(id: string): LibraryItem[] {
-  const list = listLibrary().filter((i) => i.id !== id);
-  writeJson('library.json', list);
-  return list;
+  getDb().prepare('DELETE FROM library WHERE id = ?').run(id);
+  return listLibrary();
 }
 
 export function updateLibraryItem(id: string, patch: Partial<LibraryItem>): LibraryItem | null {
-  const list = listLibrary();
-  const item = list.find((i) => i.id === id);
+  const d = getDb();
+  const item = d.prepare('SELECT * FROM library WHERE id = ?').get(id) as LibraryItem | undefined;
   if (!item) return null;
-  Object.assign(item, patch);
-  writeJson('library.json', list);
-  return item;
+  d.prepare('UPDATE library SET title = ?, html = ? WHERE id = ?').run(
+    patch.title ?? item.title, patch.html ?? item.html, id,
+  );
+  return { ...item, ...patch };
+}
+
+// ---------- memory.md (agent 长期记忆，主会话注入) ----------
+
+export function memoryPath(): string {
+  return path.join(wbRoot(), 'memory.md');
+}
+
+export function ensureMemoryFile(): void {
+  const p = memoryPath();
+  if (!fs.existsSync(p)) {
+    fs.writeFileSync(p, '# 长期记忆\n\n（由 agent 维护：值得长期记住的用户偏好、事实、约定。条目化，带日期。）\n');
+  }
+}
+
+/** memory.md content, tail-truncated for prompt injection */
+export function readMemory(maxChars = 4000): string {
+  ensureMemoryFile();
+  const content = fs.readFileSync(memoryPath(), 'utf8').trim();
+  return content.length > maxChars ? content.slice(content.length - maxChars) : content;
+}
+
+/** memory.md 整文覆盖写（Agents 页长期记忆编辑器用） */
+export function writeMemory(content: string): void {
+  ensureMemoryFile();
+  fs.writeFileSync(memoryPath(), content, 'utf8');
 }
 
 // ---------- agents.md (workspace-level, managed markers) ----------

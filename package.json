@@ -1,7 +1,7 @@
 {
   "name": "kimi-desktop-personal-agent",
   "productName": "Kimi Desktop Personal Agent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Kimi desktop personal agent — voice-first home, self-evolving workbench, ACP client for kimi-code CLI",
   "license": "MIT",
   "author": "AlbertYang",
@@ -26,6 +26,7 @@
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.0.0",
     "concurrently": "^9.0.0",
     "electron": "^37.0.0",
@@ -35,6 +36,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.23.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.3",
     "zod": "^4.4.3"
   }
 }

@@ -49,8 +49,13 @@ export function createBallWindow(): BrowserWindow {
   });
   ballWin.setAlwaysOnTop(true, 'screen-saver');
   ballWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  ballWin.setAspectRatio(1); // 保持正圆，跨显示器移动时不被拉伸
   ballWin.loadFile(path.join(rendererDir(), 'ball', 'index.html'));
   ballWin.on('closed', () => (ballWin = null));
+  // 显示器参数变化（拔插/换屏）时强制回正尺寸
+  screen.on('display-metrics-changed', () => {
+    if (ballWin && !ballWin.isDestroyed()) ballWin.setSize(BALL_SIZE, BALL_SIZE);
+  });
 
   // poll global cursor position for the eye-tracking animation
   cursorTimer = setInterval(() => {

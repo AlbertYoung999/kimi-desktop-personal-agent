@@ -99,6 +99,9 @@ let currentThoughtBox: HTMLElement | null = null;
 let currentThoughtBody: HTMLElement | null = null;
 let pendingPermissionId: string | null = null;
 let loadingEl: HTMLElement | null = null;
+// 本窗口刚发出的用户消息文本：主进程会把它以 kind:'user' 的 chunk 回投，
+// 匹配则跳过并清除标记，避免自己发的消息显示两遍
+let lastSentText: string | null = null;
 
 // ---------- dom ----------
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -260,6 +263,16 @@ function removeLoading() {
 window.kimi.onChunk((e) => {
   if (!currentSession || e.sessionId !== currentSession.sessionId) return;
   removeLoading();
+  if (e.kind === 'user') {
+    // 其他界面发出的用户消息 → 渲染为用户气泡（本窗口刚发的去重跳过）
+    if (lastSentText !== null && e.text === lastSentText) {
+      lastSentText = null;
+      return;
+    }
+    addMessage('user', e.text);
+    scrollToBottom();
+    return;
+  }
   if (e.kind === 'thought') {
     if (!currentThoughtBody) createThoughtBox();
     currentThoughtBody!.textContent += e.text;
@@ -405,6 +418,7 @@ function renderQueueBar() {
 async function doSend(msg: QueuedMessage) {
   const session = await ensureSession();
   addMessage('user', msg.text, msg.image, msg.quote);
+  lastSentText = msg.text; // 主进程回投的 kind:'user' chunk 据此去重
   scrollToBottom(true); // user's own message always snaps to bottom
   streaming = true;
   updateSendBtn();
@@ -421,6 +435,7 @@ async function doSend(msg: QueuedMessage) {
     await window.kimi.prompt(session.sessionId, promptText, activeModeId, msg.image);
   } catch (err) {
     removeLoading();
+    lastSentText = null; // 发送失败没有回投，清掉去重标记
     addMessage('agent', `⚠ 出错了：${String(err)}`);
     streaming = false;
     updateSendBtn();
@@ -566,7 +581,9 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('#session-tabs bu
 function renderSessionList() {
   const list = $('session-list');
   list.innerHTML = '';
-  const visible = sessions.filter((s) => sessionFilter === 'all' || (s.kind ?? 'auto') === sessionFilter);
+  const visible = sessions
+    .filter((s) => sessionFilter === 'all' || (s.kind ?? 'auto') === sessionFilter)
+    .sort((a, b) => Number(b.main ?? false) - Number(a.main ?? false)); // 主会话置顶
   if (visible.length === 0) {
     list.innerHTML = '<div class="empty-hint">还没有会话<br />直接在下方输入，开始第一段对话吧</div>';
     return;
@@ -575,8 +592,8 @@ function renderSessionList() {
     const item = document.createElement('div');
     item.className = 'session-item' + (currentSession?.sessionId === s.sessionId ? ' active' : '');
     const kind = s.kind ?? 'auto';
-    item.innerHTML = `<div class="s-title"></div><div class="s-time">${new Date(s.updatedAt).toLocaleString()}<span class="s-kind">${kind}</span></div>`;
-    item.querySelector('.s-title')!.textContent = s.title || '未命名会话';
+    item.innerHTML = `<div class="s-title"></div><div class="s-time">${new Date(s.updatedAt).toLocaleString()}<span class="s-kind">${s.main ? '⭐ 主会话' : kind}</span></div>`;
+    item.querySelector('.s-title')!.textContent = s.main ? `主会话 · ${s.title || 'JARVIS'}` : s.title || '未命名会话';
     item.onclick = () => void switchSession(s.sessionId);
     item.oncontextmenu = (e) => {
       e.preventDefault();

@@ -1,6 +1,6 @@
 import { app, Menu, Tray, nativeImage } from 'electron';
 import path from 'node:path';
-import { getBallWindow, createBallWindow, getHomeWindow, createHomeWindow, toggleHome, toggleWorkbench } from './windows.js';
+import { getBallWindow, createBallWindow, toggleWorkbench } from './windows.js';
 
 /** macOS menu-bar tray: 打开主页 / 打开工作台 / 悬浮球显隐 / 退出 */
 
@@ -23,10 +23,7 @@ export function refreshTrayMenu(): void {
   const menu = Menu.buildFromTemplate([
     {
       label: '打开主页',
-      click: () => {
-        if (!getHomeWindow()) createHomeWindow();
-        toggleHome();
-      },
+      click: () => toggleWorkbench(),
     },
     { label: '打开工作台', click: () => toggleWorkbench() },
     { type: 'separator' },

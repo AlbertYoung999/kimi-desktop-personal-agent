@@ -4,6 +4,43 @@ All notable changes to Kimi Desktop Personal Agent will be documented in this fi
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-08-23
+
+大版本：**Jarvis Shell + System as an Agent + 数据平面**。从「桌面助手」进化为「可自我感知、可进化、可呈现的个人 agent 系统」。
+
+### Added
+
+- **Jarvis Shell**：单窗口 + 左侧导航轨（主页 / Dashboard / Zen / Plugins / Agents），主页与工作台合一；玻璃拟态 HUD 视觉统一
+- **Zen 模式**：沉浸语音交互页——Apple Intelligence 风渐变光球 + 四周呼吸光影、TTS 节奏字幕条、可挂载浮层组件（可拖可缩放）、停止按钮、权限卡片、消息框默认折叠
+- **主会话常驻模型**：voice / Command Center / Zen 共用一个长期主会话（⭐ 置顶于会话列表）；`memory.md` 长期记忆由 agent 自维护并注入上下文
+- **System as an Agent**：
+  - 工作台内嵌 MCP Server（16 个工具统一能力清单 `capabilities.ts`，AGENTS.md 工具清单自动生成）
+  - `system_query` 通用查询（tasks/radars/library/layout/signals/widgets/capabilities）
+  - **数据平面**：jarvis.db（SQLite WAL）为唯一事实源；`data_schema` / `data_query`（只读 SQL 全覆盖）/ `data_exec`（护栏写：禁 DDL、强制 WHERE、白名单、快照可撤销）
+  - **呈现层**：`present` / `present_artifact`（模板化图文卡片：news-digest / data-card / gallery）/ `dismiss`，语音给摘要、卡片给细节
+  - Signals 信号总线 + 确定性反应回路（番茄钟播报 / 雷达新动态卡片 / 逾期提醒）
+- **Plugins 市场**：内置组件 + 官方预设 + 组件库，可添加到 Dashboard 或钉到导航轨
+- **Voice 体系**：Piper 本地神经 TTS（venv 集成，中英模型目录 14 个）+ macOS say 双引擎可切换；流式语音（句子级切分，首音 1-3s）；声音跟随回复主语言
+- **Agents 页**：Agent 设定 / 长期记忆 / 声音 / 工具开关 / 权限模式 / 反应回路 / 数据备份
+- **Thinking 模式**：💭 开关（high/low 即时切换）+ 思考过程流式可视化（输出开始自动消失）
+- **Phone Video**：QuickTime 窗口捕获看 iPhone 画面，Vision 模式画面随用户消息附带（不主动骚扰）
+
+### Fixed
+
+- 重启后主会话 resume 未挂 MCP（agent 无工具退化为 Bash 硬试）
+- IPC invoke/send 回执不匹配导致工具超时
+- 主会话 id 缓存过期（Zen / TTS / main-log 三处静默）→ `evMainSession` 事件同步
+- 执行中会话打开即中断（load/resume 都会取消在跑回合 → 零调用纯实况）
+- 官方 Piper macOS 包损坏（x86_64 + 缺 espeak-ng）→ pip 版 piper-tts
+- TTS 逐句切声导致中英夹杂 → 整段统一、跟随回复主语言
+- Zen hidden 语义被 CSS 覆盖、悬浮球变形、widget_modify 快照时序等
+
+### Technical
+
+- `better-sqlite3`（Electron 原生加载验证通过）；启动时 JSON → DB 一次性幂等迁移
+- MCP Server 无状态 per-request transport（127.0.0.1 随机端口）
+- 语音链路：renderer 句子切分 + 串行队列 → main `ttsSpeak` provider 路由（piper/say fallback）
+
 ## [0.3.0] - 2026-08-22
 
 ### Added

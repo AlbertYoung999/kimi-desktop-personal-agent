@@ -18,6 +18,8 @@ export interface SessionMeta {
   updatedAt: number;
   /** chat = 用户在对话窗主动创建；auto = 后台/工作台/任务会话（默认） */
   kind?: 'chat' | 'auto';
+  /** true = 常驻主会话（voice + Command Center 共用的 agent 意识体） */
+  main?: boolean;
 }
 
 export interface AppSettings {
@@ -27,6 +29,24 @@ export interface AppSettings {
   vaultDir: string;
   /** permission mode sent via session/set_config_option */
   permissionMode: 'default' | 'auto' | 'yolo';
+  /** resident main agent session id (voice + command center 共用的主会话) */
+  mainSessionId?: string;
+  /** TTS 声音（英文 / 中文） */
+  ttsVoiceEn?: string;
+  ttsVoiceZh?: string;
+  /** TTS 语速 slow/normal/fast */
+  ttsRate?: string;
+  /** TTS provider */
+  ttsProvider?: 'piper' | 'say';
+  /** 深度思考模式（thinking on/off） */
+  thinking?: boolean;
+  /** Piper 音色（英文 / 中文，模型 id） */
+  ttsPiperVoiceEn?: string;
+  ttsPiperVoiceZh?: string;
+  /** 禁用的 MCP 工具名 */
+  disabledTools?: string[];
+  /** 反应回路触发器开关 */
+  triggers?: { focusSpeak?: boolean; radarCard?: boolean; overdueNotify?: boolean; caption?: boolean };
 }
 
 export interface PromptImage {
@@ -48,7 +68,7 @@ export interface LoadSessionResult {
 
 // ---- streaming events (main -> renderer) ----
 
-export type ChunkKind = 'text' | 'thought';
+export type ChunkKind = 'text' | 'thought' | 'user';
 
 export interface ChunkEvent {
   sessionId: string;
@@ -135,18 +155,39 @@ export const IPC = {
   wbFocusHistory: 'wb:focus-history',
   wbAgentsRead: 'wb:agents-read',
   wbAgentsWrite: 'wb:agents-write',
+  wbMemoryRead: 'wb:memory-read',
+  wbMemoryWrite: 'wb:memory-write',
   wbAcpAsk: 'wb:acp-ask',
+  wbRegisterWidgets: 'wb:register-widgets',
   evWbAction: 'wb:action',
   wbActionResult: 'wb:action-result',
   evWbRefresh: 'wb:refresh',
   setSessionAllow: 'acp:set-session-allow',
   setSessionKind: 'acp:set-session-kind',
   evArtifactUpdated: 'wb:artifact-updated',
+  evPresentArtifact: 'present:artifact',
+  evPresentOpen: 'present:open',
+  evPresentDismiss: 'present:dismiss',
   evArtifactProgress: 'wb:artifact-progress',
   wbEvolveLog: 'wb:evolve-log',
   evWbNotify: 'wb:notify',
+  evMainSession: 'acp:main-session',
+  setThinking: 'acp:set-thinking',
   // home (voice-first entry)
   homeAsk: 'home:ask',
+  homeAskImage: 'home:ask-image',
+  homeMainHistory: 'home:main-history',
+  homeMainNew: 'home:main-new',
+  ttsVoices: 'tts:voices',
+  ttsSetVoice: 'tts:set-voice',
+  ttsSetProvider: 'tts:set-provider',
+  ttsSetPiperVoice: 'tts:set-piper-voice',
+  ttsPreview: 'tts:preview',
+  wbToolsList: 'wb:tools-list',
+  wbToolToggle: 'wb:tool-toggle',
+  wbRunBackup: 'wb:run-backup',
+  desktopSources: 'desktop:sources',
+  evReactionCard: 'reaction:card',
   toggleHome: 'home:toggle',
   ttsSpeak: 'tts:speak',
   ttsStop: 'tts:stop',

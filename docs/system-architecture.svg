@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480" font-family="-apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif">
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#8a8f98"/>
+    </marker>
+    <marker id="b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#1a6fe8"/>
+    </marker>
+  </defs>
+
+  <!-- surfaces -->
+  <rect x="16" y="16" width="200" height="250" rx="12" fill="#f4f7ff" stroke="#c9dbff"/>
+  <text x="116" y="40" text-anchor="middle" font-size="13" font-weight="600" fill="#1c1e21">用户界面（桌面层）</text>
+  <rect x="30" y="56" width="172" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="116" y="77" text-anchor="middle" font-size="11" fill="#1c1e21">悬浮球 · 对话浮窗 · 灵动岛</text>
+  <rect x="30" y="100" width="172" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="116" y="121" text-anchor="middle" font-size="11" fill="#1c1e21">Shell：主页 / Dashboard</text>
+  <rect x="30" y="144" width="172" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="116" y="165" text-anchor="middle" font-size="11" fill="#1c1e21">Zen（语音沉浸）</text>
+  <rect x="30" y="188" width="172" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="116" y="209" text-anchor="middle" font-size="11" fill="#1c1e21">Plugins · Agents 页</text>
+  <rect x="30" y="232" width="172" height="24" rx="7" fill="none" stroke="#c9dbff" stroke-dasharray="4 3"/>
+  <text x="116" y="248" text-anchor="middle" font-size="10" fill="#8a8f98">菜单栏 Tray</text>
+
+  <!-- electron main -->
+  <rect x="292" y="16" width="216" height="250" rx="12" fill="#eef9f1" stroke="#bfe6cb"/>
+  <text x="400" y="40" text-anchor="middle" font-size="13" font-weight="600" fill="#1c1e21">Electron 主进程</text>
+  <rect x="306" y="56" width="188" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="400" y="77" text-anchor="middle" font-size="11" fill="#1c1e21">ACPManager（会话调度）</text>
+  <rect x="306" y="100" width="188" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="400" y="121" text-anchor="middle" font-size="11" fill="#1c1e21">Workbench MCP Server</text>
+  <rect x="306" y="144" width="188" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="400" y="165" text-anchor="middle" font-size="11" fill="#1c1e21">Signals 总线 · 反应回路</text>
+  <rect x="306" y="188" width="188" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="400" y="209" text-anchor="middle" font-size="11" fill="#1c1e21">TTS（Piper / say）</text>
+  <rect x="306" y="232" width="188" height="24" rx="7" fill="none" stroke="#bfe6cb" stroke-dasharray="4 3"/>
+  <text x="400" y="248" text-anchor="middle" font-size="10" fill="#8a8f98">Whisper STT（待接入）</text>
+
+  <!-- kimi acp -->
+  <rect x="584" y="16" width="200" height="250" rx="12" fill="#fff6ec" stroke="#f2d9b8"/>
+  <text x="684" y="40" text-anchor="middle" font-size="13" font-weight="600" fill="#1c1e21">kimi acp（本地 agent）</text>
+  <rect x="598" y="56" width="172" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="684" y="77" text-anchor="middle" font-size="11" fill="#1c1e21">主会话（连续意识）</text>
+  <rect x="598" y="100" width="172" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="684" y="121" text-anchor="middle" font-size="11" fill="#1c1e21">工作会话（生成/摘要）</text>
+  <rect x="598" y="144" width="172" height="34" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="684" y="165" text-anchor="middle" font-size="11" fill="#1c1e21">任务会话（执行体）</text>
+  <rect x="598" y="188" width="172" height="58" rx="7" fill="#fff" stroke="#e3e5e9"/>
+  <text x="684" y="209" text-anchor="middle" font-size="11" fill="#1c1e21">MCP 工具（16+）</text>
+  <text x="684" y="227" text-anchor="middle" font-size="10" fill="#4b5058">数据 / 任务 / 雷达 / 呈现 / 演化</text>
+
+  <!-- data layer -->
+  <rect x="292" y="330" width="492" height="56" rx="12" fill="#f4f5f7" stroke="#e3e5e9"/>
+  <text x="538" y="352" text-anchor="middle" font-size="12" font-weight="600" fill="#1c1e21">本地数据（~/.jarvis-workspace）</text>
+  <text x="538" y="372" text-anchor="middle" font-size="10.5" fill="#4b5058">jarvis.db（SQLite）· memory.md · AGENTS.md · library · evolve.jsonl · backups</text>
+
+  <!-- arrows -->
+  <line x1="216" y1="141" x2="286" y2="141" stroke="#8a8f98" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="251" y="130" text-anchor="middle" font-size="10" fill="#8a8f98">IPC</text>
+
+  <line x1="508" y1="120" x2="578" y2="120" stroke="#1a6fe8" stroke-width="1.5" marker-end="url(#b)"/>
+  <line x1="578" y1="160" x2="508" y2="160" stroke="#1a6fe8" stroke-width="1.5" marker-end="url(#b)"/>
+  <text x="543" y="108" text-anchor="middle" font-size="10" fill="#1a6fe8">ACP · stdio</text>
+  <text x="543" y="180" text-anchor="middle" font-size="10" fill="#1a6fe8">MCP tools</text>
+
+  <line x1="400" y1="266" x2="400" y2="322" stroke="#8a8f98" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="684" y1="266" x2="684" y2="322" stroke="#8a8f98" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- captions -->
+  <text x="400" y="420" text-anchor="middle" font-size="11" fill="#4b5058">单进程多会话 · 会话回收 · 原子写 · 每日备份</text>
+  <text x="400" y="440" text-anchor="middle" font-size="11" fill="#4b5058">一切本地：模型通过本地 kimi CLI，数据不出你的 Mac</text>
+</svg>

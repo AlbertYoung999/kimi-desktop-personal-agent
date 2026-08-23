@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getDb } from './db.js';
 import type { NewsItem, Radar } from '../shared/workbench-types.js';
 import { wbRoot } from './workbench.js';
 
@@ -11,28 +12,57 @@ const MAX_ITEMS = 200;
 const MAX_NEW_PER_RUN = 30; // cap AI-structuring cost per run
 const SUMMARY_BATCH = 10;
 
-// ---------- storage ----------
+// ---------- storage (SQLite radar_items + radars) ----------
 
-function radarsDir(): string {
-  const dir = path.join(wbRoot(), 'radars');
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+interface RadarRow {
+  id: string; name: string; icon: string | null; query: string | null;
+  sources: string; frequency_minutes: number; enabled: number; last_run_at: number | null;
+}
+interface ItemRow {
+  id: string; radar_id: string; title: string; summary: string; source: string | null;
+  url: string | null; published_at: string | null; tags: string; read: number; favorite: number;
 }
 
-function radarPath(id: string): string {
-  return path.join(radarsDir(), `${id}.json`);
+function rowToItem(r: ItemRow): NewsItem {
+  return {
+    id: r.id, title: r.title, summary: r.summary, source: r.source ?? '', url: r.url ?? '',
+    publishedAt: r.published_at ?? '', tags: JSON.parse(r.tags || '[]') as string[],
+    read: r.read === 1, favorite: r.favorite === 1,
+  };
 }
 
-function readRadarFile(id: string): Radar | null {
-  try {
-    return JSON.parse(fs.readFileSync(radarPath(id), 'utf8')) as Radar;
-  } catch {
-    return null;
-  }
+function readRadar(id: string): Radar | null {
+  const d = getDb();
+  const row = d.prepare('SELECT * FROM radars WHERE id = ?').get(id) as RadarRow | undefined;
+  if (!row) return null;
+  const items = (d.prepare('SELECT * FROM radar_items WHERE radar_id = ? ORDER BY published_at DESC').all(id) as ItemRow[]).map(rowToItem);
+  return {
+    id: row.id, name: row.name, icon: row.icon ?? '', query: row.query ?? '',
+    sources: JSON.parse(row.sources || '[]') as string[], frequencyMinutes: row.frequency_minutes,
+    enabled: row.enabled === 1, lastRunAt: row.last_run_at,
+    items,
+  };
 }
 
-function writeRadarFile(radar: Radar): void {
-  fs.writeFileSync(radarPath(radar.id), JSON.stringify(radar, null, 2));
+function writeRadarConfig(radar: Radar): void {
+  getDb().prepare(`INSERT OR REPLACE INTO radars (id,name,icon,query,sources,frequency_minutes,enabled,last_run_at)
+    VALUES (?,?,?,?,?,?,?,?)`).run(
+    radar.id, radar.name, radar.icon, radar.query, JSON.stringify(radar.sources),
+    radar.frequencyMinutes, radar.enabled ? 1 : 0, radar.lastRunAt,
+  );
+}
+
+function insertItems(radarId: string, items: NewsItem[]): void {
+  const d = getDb();
+  const ins = d.prepare(`INSERT OR IGNORE INTO radar_items (id,radar_id,title,summary,source,url,published_at,tags,read,favorite)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const tx = d.transaction(() => {
+    for (const i of items) {
+      ins.run(i.id, radarId, i.title, i.summary, i.source, i.url, i.publishedAt,
+        JSON.stringify(i.tags), i.read ? 1 : 0, i.favorite ? 1 : 0);
+    }
+  });
+  tx();
 }
 
 function defaultRadars(): Radar[] {
@@ -75,36 +105,31 @@ function defaultRadars(): Radar[] {
 }
 
 export function listRadars(): Radar[] {
-  let files: string[] = [];
-  try {
-    files = fs.readdirSync(radarsDir()).filter((f) => f.endsWith('.json'));
-  } catch {
-    files = [];
-  }
-  if (files.length === 0) {
+  const d = getDb();
+  const count = (d.prepare('SELECT COUNT(*) AS c FROM radars').get() as { c: number }).c;
+  if (count === 0) {
     // first run: seed the built-in radars
     const seeds = defaultRadars();
-    for (const r of seeds) writeRadarFile(r);
+    for (const r of seeds) writeRadarConfig(r);
     return seeds;
   }
-  const radars: Radar[] = [];
-  for (const f of files) {
-    const r = readRadarFile(f.replace(/\.json$/, ''));
-    if (r) radars.push(r);
-  }
-  return radars;
+  const rows = d.prepare('SELECT id FROM radars').all() as { id: string }[];
+  return rows.map((r) => readRadar(r.id)).filter((r): r is Radar => r !== null);
 }
 
 export function saveRadar(radar: Radar): Radar[] {
-  if (radar.items.length > MAX_ITEMS) radar.items = radar.items.slice(0, MAX_ITEMS);
-  writeRadarFile(radar);
+  writeRadarConfig(radar);
+  // items 变更（已读/收藏等）按 id upsert
+  insertItems(radar.id, radar.items);
   reschedule(radar);
   return listRadars();
 }
 
 export function deleteRadar(id: string): Radar[] {
   clearTimer(id);
-  fs.rmSync(radarPath(id), { force: true });
+  const d = getDb();
+  d.prepare('DELETE FROM radars WHERE id = ?').run(id);
+  d.prepare('DELETE FROM radar_items WHERE radar_id = ?').run(id);
   return listRadars();
 }
 
@@ -311,24 +336,25 @@ function clearTimer(id: string): void {
 }
 
 async function runRadar(id: string): Promise<number> {
-  const radar = readRadarFile(id);
+  const radar = readRadar(id);
   if (!radar) return 0;
   let newCount = 0;
   try {
     const rawLists = await Promise.all(radar.sources.map((s) => fetchSource(s).catch(() => [] as RawItem[])));
-    const known = new Set(radar.items.map((i) => i.url));
+    const knownRows = getDb().prepare('SELECT url FROM radar_items WHERE radar_id = ?').all(id) as { url: string }[];
+    const known = new Set(knownRows.map((r) => r.url));
     const fresh = rawLists.flat().filter((r) => r.url && !known.has(r.url));
     if (fresh.length > 0) {
       const structured = await structureItems(fresh);
       structured.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
-      radar.items = [...structured, ...radar.items].slice(0, MAX_ITEMS);
+      insertItems(id, structured.slice(0, MAX_ITEMS));
       newCount = structured.length;
     }
   } catch {
     /* keep old items; still record the attempt below */
   }
   radar.lastRunAt = Date.now();
-  writeRadarFile(radar);
+  writeRadarConfig(radar);
   if (newCount > 0) deps?.push(radar.id, newCount);
   return newCount;
 }

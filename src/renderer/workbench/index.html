@@ -16,16 +16,185 @@
       <button id="btn-agents" class="hud-btn">AGENTS.md</button>
     </header>
 
-    <div id="hud-body">
-      <aside id="radar-strip"><!-- P1: Info Radar 侧边条 --></aside>
-      <main id="stage"><div id="stage-canvas"></div></main>
-    </div>
+    <div id="hud-shell">
+      <!-- V4-A: 左侧导航轨（core/nav.ts 渲染） -->
+      <nav id="nav-rail"></nav>
 
-    <footer id="dock">
-      <span id="dock-status" class="hud-status">WIDGETS: 0</span>
-      <button id="dock-add" title="添加 widget">＋</button>
-      <div id="dock-items"></div>
-    </footer>
+      <div id="hud-body">
+        <!-- 主页（pages/home.ts 迁入自 home 窗口） -->
+        <div class="page active" id="page-home">
+          <div class="home-main">
+            <aside class="holo-panel home-side" id="left-panel">
+              <div class="section-title sys-title">
+                <span>// SYSTEM</span>
+                <button id="btn-metrics-gear" title="指标开关">⚙</button>
+              </div>
+
+              <div class="metric-block" id="m-cpu">
+                <div class="meter">
+                  <div class="meter-head"><span>CPU</span><span class="val" id="cpu-val">--%</span></div>
+                  <div class="meter-track"><div class="meter-fill" id="cpu-fill"></div></div>
+                </div>
+              </div>
+
+              <div class="metric-block" id="m-ram">
+                <div class="meter">
+                  <div class="meter-head">
+                    <span>RAM</span>
+                    <span><span class="val" id="mem-val">--%</span><span class="sub" id="mem-gb">--/-- GB</span></span>
+                  </div>
+                  <div class="meter-track"><div class="meter-fill" id="mem-fill"></div></div>
+                </div>
+              </div>
+
+              <div class="metric-block" id="m-disk">
+                <div class="block-label">DISK</div>
+                <div class="donut-wrap">
+                  <svg viewBox="0 0 72 72" width="72" height="72">
+                    <circle class="donut-bg" cx="36" cy="36" r="30"></circle>
+                    <circle class="donut-fg" id="disk-arc" cx="36" cy="36" r="30"></circle>
+                  </svg>
+                  <div class="donut-num" id="disk-val">--%</div>
+                </div>
+              </div>
+
+              <div class="metric-block" id="m-net">
+                <div class="meter-head">
+                  <span>NET</span>
+                  <span class="net-vals"><span class="val" id="net-in">↓ -- KB/s</span><span class="val up" id="net-out">↑ -- KB/s</span></span>
+                </div>
+                <canvas id="net-spark"></canvas>
+              </div>
+
+              <div class="metric-block" id="m-battery">
+                <div class="block-label">BATTERY</div>
+                <div class="batt-row">
+                  <div class="batt-icon"><div class="batt-fill" id="batt-fill"></div></div>
+                  <span class="batt-pct" id="batt-pct">--%</span>
+                  <span class="batt-bolt" id="batt-bolt" hidden>⚡</span>
+                </div>
+              </div>
+
+              <div class="metric-block" id="m-wifi">
+                <span class="wifi-line">⌁ <span id="wifi-ssid">--</span></span>
+              </div>
+
+              <div class="metric-block" id="m-top">
+                <div class="block-label">TOP PROCS</div>
+                <div id="top-list"></div>
+              </div>
+
+              <div class="stat-cards two">
+                <div class="stat-card"><div class="num" id="stat-load">--</div><div class="lbl">负载</div></div>
+                <div class="stat-card"><div class="num" id="stat-uptime">--</div><div class="lbl">运行</div></div>
+              </div>
+
+              <div class="section-title">// MODULES</div>
+              <div class="modules">
+                <div class="module-row off">
+                  <span class="mdot"></span><span class="mname">STT</span><span class="mval">WHISPER</span><span class="mtag">待接入</span>
+                </div>
+                <div class="module-row">
+                  <span class="mdot"></span><span class="mname">BRAIN</span><span class="mval">KIMI-ACP</span>
+                </div>
+                <div class="module-row">
+                  <span class="mdot"></span><span class="mname">VOICE</span><span class="mval">DANIEL-GB</span>
+                </div>
+                <div class="module-row">
+                  <span class="mdot"></span><span class="mname">ORB</span><span class="mval">CORE</span>
+                </div>
+                <div class="module-row">
+                  <span class="mdot"></span><span class="mname">GPU</span><span class="mval" id="gpu-model">--</span>
+                </div>
+              </div>
+
+              <div class="section-title">// WORKSHOP</div>
+              <div class="workshop-list" id="workshop-list">
+                <div class="ws-item empty">载入中…</div>
+              </div>
+
+              <!-- 指标开关浮层 -->
+              <div id="metrics-overlay" hidden>
+                <div class="mo-title">// 指标开关</div>
+                <label><input type="checkbox" data-metric="cpu" /> CPU</label>
+                <label><input type="checkbox" data-metric="ram" /> RAM</label>
+                <label><input type="checkbox" data-metric="disk" /> DISK</label>
+                <label><input type="checkbox" data-metric="net" /> 网络</label>
+                <label><input type="checkbox" data-metric="battery" /> 电池</label>
+                <label><input type="checkbox" data-metric="wifi" /> Wi-Fi</label>
+                <label><input type="checkbox" data-metric="top" /> TOP 进程</label>
+              </div>
+            </aside>
+
+            <section class="home-center">
+              <div class="home-clock">
+                <div id="clock-time">--:--:--<span class="ampm">--</span></div>
+                <div id="clock-date">----年--月--日 星期-</div>
+              </div>
+              <canvas id="orb-canvas" width="420" height="420"></canvas>
+              <div id="orb-status">READY…</div>
+            </section>
+
+            <aside class="holo-panel home-side" id="right-panel">
+              <div class="section-title">// EVENT LOG</div>
+              <div id="log-list"></div>
+            </aside>
+          </div>
+
+          <footer class="home-bottom">
+            <div id="ticker-wrap"><div id="ticker"></div></div>
+            <div id="input-row">
+              <span id="prompt-char">›</span>
+              <input id="input" type="text" placeholder="Message KIMI…" autocomplete="off" spellcheck="false" />
+              <button class="home-btn" id="btn-mic" disabled title="下期接入 whisper">MIC</button>
+              <button class="home-btn" id="btn-send">SEND</button>
+            </div>
+          </footer>
+        </div>
+
+        <!-- Dashboard = 现有工作台（stage + dock），id 保持不变 -->
+        <div class="page" id="page-dashboard">
+          <div class="dashboard-main">
+            <aside id="radar-strip"><!-- P1: Info Radar 侧边条 --></aside>
+            <main id="stage"><div id="stage-canvas"></div></main>
+          </div>
+          <footer id="dock">
+            <span id="dock-status" class="hud-status">WIDGETS: 0</span>
+            <button id="dock-add" title="添加 widget">＋</button>
+            <div id="dock-items"></div>
+          </footer>
+        </div>
+
+        <!-- V4-B: Zen 模式页（pages/zen.ts 驱动） -->
+        <div class="page" id="page-zen">
+          <div class="zen-glow"><div class="zen-glow-inner"></div></div>
+          <canvas id="zen-orb" width="630" height="630"></canvas>
+          <div id="zen-status">READY…</div>
+          <div id="zen-chat" hidden>
+            <div class="zen-chat-head">// MAIN SESSION</div>
+            <div id="zen-chat-list"></div>
+          </div>
+          <div id="zen-input-row">
+            <span class="zen-prompt">›</span>
+            <input id="zen-input" placeholder="说点什么…" autocomplete="off" />
+            <button id="zen-thinking-toggle" title="深度思考">💭</button>
+            <button id="zen-stop" title="停止当前回复" hidden>⏹</button>
+          </div>
+          <div id="zen-thought" hidden></div>
+          <button id="zen-menu-btn" title="菜单">≡</button>
+          <div id="zen-menu" hidden>
+            <button id="zen-mi-chat">显示消息框</button>
+            <button id="zen-mi-add">添加组件</button>
+            <button id="zen-mi-mic" disabled title="whisper 待接入">麦克风</button>
+            <button id="zen-mi-exit">退出 Zen</button>
+          </div>
+        </div>
+        <!-- V4-B: Plugins 市场页（pages/plugins.ts 渲染） -->
+        <div class="page" id="page-plugins"></div>
+        <!-- V4-C 占位页（pages/placeholder.ts 渲染） -->
+        <div class="page" id="page-agents"></div>
+      </div>
+    </div>
   </div>
 
   <div id="palette" class="hidden">

@@ -2,6 +2,8 @@ import type { WbActionCall } from '../../api';
 import { bus } from './bus';
 import { addWidget, minimizeWidget, popArtifact, restoreWidget } from './layout';
 import { allWidgets } from './registry';
+import { dismissZenFloat, mountZenFloat, mountZenWidget } from '../pages/zen';
+import { mountArtifact } from '../widgets/artifact';
 
 /**
  * Executes tool calls forwarded from the workbench MCP server (design-evolve.md E1).
@@ -52,6 +54,26 @@ async function execute(call: WbActionCall): Promise<string> {
   if (action === 'focus_start') {
     addWidget('deep-focus', { lastTask: String(params.task ?? ''), lastMode: String(params.mode ?? 'sprint') });
     return `已打开番茄钟并预填「${params.task}」（${params.mode ?? 'sprint'}），点击开始即计时`;
+  }
+  if (action === 'present_open') {
+    const target = String(params.target ?? '');
+    // 1) 内置 widget id/别名 → 挂 zen 浮层（artifact 通用壳跳过，留给库组件匹配）
+    const id = resolveWidgetId(target);
+    if (id && id !== 'artifact' && mountZenWidget(id)) return `已在 Zen 打开「${target}」`;
+    // 2) 组件库标题模糊匹配 → mountArtifact 挂浮层
+    const q = target.trim().toLowerCase();
+    const lib = await window.kimi.wb.libraryList();
+    const item = lib.find((i) => i.title.toLowerCase() === q) ?? lib.find((i) => i.title.toLowerCase().includes(q));
+    if (item) {
+      mountZenFloat(item.title, (body) => mountArtifact(body, item.html));
+      return `已在 Zen 打开组件「${item.title}」`;
+    }
+    return `✗ 没有组件「${target}」，需要先创建（提示模型走 Forge）`;
+  }
+  if (action === 'present_dismiss') {
+    const target = String(params.target ?? 'latest');
+    const closed = dismissZenFloat(target);
+    return closed ? `已关闭「${closed}」` : `✗ Zen 里没有「${target}」浮层`;
   }
   return `✗ 未知 action: ${action}`;
 }

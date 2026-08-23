@@ -16,9 +16,13 @@ function readJson<T>(file: string, fallback: T): T {
   }
 }
 
+/** atomic write: tmp file + rename, so a crash mid-write never corrupts data */
 function writeJson(file: string, value: unknown): void {
   fs.mkdirSync(dataDir(), { recursive: true });
-  fs.writeFileSync(path.join(dataDir(), file), JSON.stringify(value, null, 2));
+  const p = path.join(dataDir(), file);
+  const tmp = `${p}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  fs.renameSync(tmp, p);
 }
 
 // ---------- settings ----------
