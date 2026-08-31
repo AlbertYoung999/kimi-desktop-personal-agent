@@ -177,6 +177,25 @@
     }
     #empty .glyph { font-size: 22px; opacity: 0.6; }
 
+    /* ---- 已过期折叠区 ---- */
+    .odSec {
+      margin-top: 6px; padding-top: 4px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.09);
+    }
+    .odHead {
+      display: flex; align-items: center; gap: 5px;
+      width: 100%;
+      padding: 4px 8px;
+      background: transparent; border: none; border-radius: 6px;
+      color: #7d8590; font-size: 10px; letter-spacing: 1px;
+      cursor: pointer; font-family: inherit; text-align: left;
+    }
+    .odHead:hover { background: rgba(255, 255, 255, 0.03); color: #aeb8c2; }
+    .odHead .odCount { color: #c77d2e; }
+    .odBody { display: none; }
+    .odSec.open .odBody { display: block; }
+    .odDate { color: #c77d2e; font-size: 9px; font-variant-numeric: tabular-nums; }
+
     /* ---- schedule timeline ---- */
     #timeline {
       display: none;

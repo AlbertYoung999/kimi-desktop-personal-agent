@@ -16,6 +16,7 @@ type PanelView = 'list' | 'schedule';
 let tasks: Task[] = [];
 let pomo: PomodoroState = { active: false };
 let view: PanelView = localStorage.getItem('todoPanelView') === 'schedule' ? 'schedule' : 'list';
+let overdueOpen = localStorage.getItem('todoPanelOverdueOpen') === '1';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -33,6 +34,21 @@ function isTodayTs(ms?: number): boolean {
   return typeof ms === 'number' && sameDay(new Date(ms), new Date());
 }
 
+// 日期是否早于今天（按本地年月日比较）
+function isBeforeToday(iso?: string): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  const n = new Date();
+  const a = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  const b = n.getFullYear() * 10000 + (n.getMonth() + 1) * 100 + n.getDate();
+  return a < b;
+}
+
+function dayKey(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -40,6 +56,11 @@ function pad2(n: number): string {
 function fmtHM(iso: string): string {
   const d = new Date(iso);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function fmtMD(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 function minOfDay(iso: string): number {
@@ -76,7 +97,19 @@ function visibleTasks(): { active: Task[]; done: Task[] } {
   return { active, done };
 }
 
+// 过期任务：未完成，dueDate 或 scheduledStart 早于今天，且不在今日列表里（避免重复）
+function overdueTasks(excludeIds: Set<string>): Task[] {
+  return tasks
+    .filter((t) => {
+      if (t.status === 'done' || t.status === 'canceled') return false;
+      if (excludeIds.has(t.id)) return false;
+      return isBeforeToday(t.dueDate) || isBeforeToday(t.scheduledStart);
+    })
+    .sort(byPriorityThenUpdated);
+}
+
 function renderHeader(): void {
+  // 每次 render 都用 new Date() 重算，跨天由 30s 轮询触发 reload
   const now = new Date();
   $('date').textContent = `${now.getMonth() + 1}/${now.getDate()} ${WEEKDAYS[now.getDay()]}`;
   $('segList').classList.toggle('on', view === 'list');
@@ -138,8 +171,9 @@ async function launchTaskSession(t: Task): Promise<void> {
   render();
 }
 
-// orphanParent：父任务存在但不在列表里时传入，用于 ↳ 父任务名 灰字标注
-function buildRow(t: Task, sub: boolean, orphanParent?: Task): HTMLElement {
+// orphanParent：父任务存在但不在同组里时传入，用于 ↳ 父任务名 灰字标注
+// overdueTag：过期区条目传入（如 "8/29"），标题前加暗橙色过期日期小字
+function buildRow(t: Task, sub: boolean, orphanParent?: Task, overdueTag?: string): HTMLElement {
   const done = t.status === 'done';
   const timing = pomo.active && pomo.taskId === t.id;
   const row = document.createElement('div');
@@ -166,6 +200,12 @@ function buildRow(t: Task, sub: boolean, orphanParent?: Task): HTMLElement {
   main.className = 'taskMain';
   const title = document.createElement('span');
   title.className = 'taskTitle';
+  if (overdueTag) {
+    const od = document.createElement('span');
+    od.className = 'odDate';
+    od.textContent = `${overdueTag} · `;
+    title.appendChild(od);
+  }
   if (orphanParent) {
     const tag = document.createElement('span');
     tag.className = 'sub';
@@ -224,9 +264,12 @@ function renderList(): void {
   const list = $('list');
   const empty = $('empty');
   const { active, done } = visibleTasks();
+  const visibleAll = [...active, ...done];
+  const visibleIds = new Set(visibleAll.map((t) => t.id));
+  const overdue = overdueTasks(visibleIds);
   list.innerHTML = '';
 
-  if (active.length === 0 && done.length === 0) {
+  if (visibleAll.length === 0 && overdue.length === 0) {
     list.style.display = 'none';
     empty.style.display = 'flex';
     return;
@@ -235,8 +278,6 @@ function renderList(): void {
   empty.style.display = 'none';
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  const visibleAll = [...active, ...done];
-  const visibleIds = new Set(visibleAll.map((t) => t.id));
   // 父任务在列表里 → 子任务嵌套在其下；否则子任务作为顶层行（带 ↳ 父任务名 标注）
   const childrenOf = (pid: string): Task[] => visibleAll.filter((t) => t.parentId === pid).sort(byPriorityThenUpdated);
   const appendWithChildren = (t: Task): void => {
@@ -263,6 +304,57 @@ function renderList(): void {
     } else {
       appendWithChildren(t);
     }
+  }
+
+  // ---- 已过期折叠区 ----
+  if (overdue.length > 0) {
+    const sec = document.createElement('div');
+    sec.className = `odSec${overdueOpen ? ' open' : ''}`;
+
+    const head = document.createElement('button');
+    head.className = 'odHead';
+    const arrow = document.createElement('span');
+    arrow.textContent = overdueOpen ? '▾' : '▸';
+    head.appendChild(arrow);
+    head.appendChild(document.createTextNode(' 已过期 · '));
+    const count = document.createElement('span');
+    count.className = 'odCount';
+    count.textContent = String(overdue.length);
+    head.appendChild(count);
+
+    const body = document.createElement('div');
+    body.className = 'odBody';
+
+    const odIds = new Set(overdue.map((t) => t.id));
+    const odChildrenOf = (pid: string): Task[] =>
+      overdue.filter((t) => t.parentId === pid).sort(byPriorityThenUpdated);
+    const odTag = (t: Task): string | undefined => {
+      const iso = isBeforeToday(t.dueDate) ? t.dueDate : t.scheduledStart;
+      return iso ? fmtMD(iso) : undefined;
+    };
+    const appendOd = (t: Task): void => {
+      body.appendChild(buildRow(t, false, undefined, odTag(t)));
+      for (const c of odChildrenOf(t.id)) body.appendChild(buildRow(c, true, undefined, odTag(c)));
+    };
+    for (const t of overdue) {
+      if (t.parentId && odIds.has(t.parentId)) continue; // 父任务也在过期区 → 缩进嵌套
+      const orphanParent = t.parentId ? byId.get(t.parentId) : undefined;
+      if (orphanParent) {
+        body.appendChild(buildRow(t, false, orphanParent, odTag(t)));
+      } else {
+        appendOd(t);
+      }
+    }
+
+    head.addEventListener('click', () => {
+      overdueOpen = !overdueOpen;
+      localStorage.setItem('todoPanelOverdueOpen', overdueOpen ? '1' : '0');
+      sec.classList.toggle('open', overdueOpen);
+      arrow.textContent = overdueOpen ? '▾' : '▸';
+    });
+
+    sec.append(head, body);
+    list.appendChild(sec);
   }
 }
 
@@ -379,7 +471,10 @@ function setView(v: PanelView): void {
   if (v === 'schedule') scrollTimelineToNow();
 }
 
+let lastDayKey = dayKey();
+
 async function reload(): Promise<void> {
+  lastDayKey = dayKey();
   tasks = await window.kimi.wb.listTasks();
   render();
 }
@@ -421,6 +516,11 @@ setInterval(() => {
   const nowLine = document.getElementById('nowLine');
   if (nowLine) nowLine.style.top = `${nowTop()}px`;
 }, 1000);
+
+// 每 30s 检查是否跨天：日期 key 变了就整体 reload（列表/统计/日程全部重算）
+setInterval(() => {
+  if (dayKey() !== lastDayKey) void reload();
+}, 30_000);
 
 void (async () => {
   pomo = await window.kimi.pomodoroState();

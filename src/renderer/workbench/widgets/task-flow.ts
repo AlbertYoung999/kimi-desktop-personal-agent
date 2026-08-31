@@ -288,6 +288,20 @@ const CSS = `
 .wf-task-flow-todayrow:hover .wf-task-flow-todoacts, .wf-task-flow-todoacts.timing { display: flex; }
 .wf-task-flow-sessionbtn { color: var(--green); border-color: rgba(0,255,136,0.35); background: rgba(0,255,136,0.06); }
 .wf-task-flow-sessionbtn:hover { box-shadow: 0 0 10px rgba(0,255,136,0.35); }
+/* 已过期折叠区 */
+.wf-task-flow-overdue {
+  flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+  border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px;
+}
+.wf-task-flow-overduehead {
+  border: none; background: none; color: var(--muted); font: inherit;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+  text-align: left; padding: 2px 0; cursor: pointer;
+}
+.wf-task-flow-overduehead:hover { color: var(--warn); }
+.wf-task-flow-overduelist { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+.wf-task-flow-todayrow.overdue .wf-task-flow-todotitle { color: var(--muted); }
+.wf-task-flow-overduedate { font-family: var(--mono); font-size: 10px; color: var(--warn); flex-shrink: 0; }
 .wf-task-flow-todayrow input[type="checkbox"] { accent-color: var(--neon); margin: 0; flex-shrink: 0; cursor: pointer; }
 .wf-task-flow-todot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 6px currentColor; }
 .wf-task-flow-todotitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
@@ -1125,10 +1139,18 @@ registerWidget({
       return `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`;
     }
 
-    // 每秒刷新今日视图里的倒计时（元素带 data-wf-pomo-remain 标记）
+    // 每秒刷新今日视图里的倒计时（元素带 data-wf-pomo-remain 标记）；顺带检测跨天
+    let renderedDayKey = dateKeyOf(new Date());
     const pomoTick = window.setInterval(() => {
       if (!body.isConnected) {
         window.clearInterval(pomoTick);
+        return;
+      }
+      // 过午夜后重拉数据：今日/日程视图按当前日期归格
+      const dk = dateKeyOf(new Date());
+      if (dk !== renderedDayKey) {
+        renderedDayKey = dk;
+        void reload();
         return;
       }
       if (!state.pomo.active) return;
@@ -1161,17 +1183,16 @@ registerWidget({
       );
     }
 
-    /**
-     * 今日待办（分层）：命中今日条件的任务 + 其父任务命中今日条件的子任务。
-     * 子任务挂在父任务的 subs 里随组渲染；父任务不在列表时子任务才作顶层项（孤儿子任务）。
-     * 今天完成的（completedAt 是今天）保留展示；排序按组：未完成在前 done 置底、优先级、updatedAt，
-     * 组内子任务按优先级排，父任务 done 置底时子任务跟随
-     */
+    /** 今日/过期列表的分层结构：顶层项 + 其子任务 */
     interface TodayGroup {
       task: Task;
       subs: Task[];
     }
 
+    /**
+     * 今日待办（分层）：命中今日条件的任务 + 其父任务命中今日条件的子任务。
+     * 今天完成的（completedAt 是今天）保留展示；排序规则见 groupSubs
+     */
     function todayGroups(): TodayGroup[] {
       const tk = todayStr();
       const all = filtered();
@@ -1188,6 +1209,14 @@ registerWidget({
         if (t.status === 'done') return !!t.completedAt && dateKey(t.completedAt) === tk;
         return true;
       });
+      return groupSubs(listed);
+    }
+
+    /**
+     * 分层分组：父任务在 listed 里的子任务挂进父的 subs，否则作顶层项（孤儿子任务）。
+     * 排序按组：未完成在前 done 置底、优先级、updatedAt；组内子任务按优先级排
+     */
+    function groupSubs(listed: Task[]): TodayGroup[] {
       const listedIds = new Set(listed.map((t) => t.id));
       const byPrio = (a: Task, b: Task): number =>
         PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority) || b.updatedAt - a.updatedAt;
@@ -1207,6 +1236,32 @@ registerWidget({
       return groups.sort(
         (a, b) => Number(a.task.status === 'done') - Number(b.task.status === 'done') || byPrio(a.task, b.task),
       );
+    }
+
+    /**
+     * 已过期（分层）：未完成 且（截止/排期在今天之前），且不在今日活跃列表里。
+     * 子任务跟随父任务嵌套；子任务自身过期而父不过期时作顶层孤儿行
+     */
+    function overdueGroups(): TodayGroup[] {
+      const tk = todayStr();
+      const inToday = new Set<string>();
+      for (const g of todayGroups()) {
+        inToday.add(g.task.id);
+        for (const s of g.subs) inToday.add(s.id);
+      }
+      const isOverdueItem = (t: Task): boolean =>
+        (!!t.dueDate && dateKey(t.dueDate) < tk) || (!!t.scheduledStart && dateKey(t.scheduledStart) < tk);
+      const all = filtered();
+      const parentOverdue = new Set<string>();
+      for (const t of all) {
+        if (!t.parentId && t.status !== 'done' && t.status !== 'canceled' && isOverdueItem(t)) parentOverdue.add(t.id);
+      }
+      const listed = all.filter((t) => {
+        if (t.status === 'done' || t.status === 'canceled') return false;
+        if (inToday.has(t.id)) return false; // 避免与今日列表重复
+        return isOverdueItem(t) || (!!t.parentId && parentOverdue.has(t.parentId));
+      });
+      return groupSubs(listed);
     }
 
     function renderToday(container: HTMLElement): void {
@@ -1241,6 +1296,29 @@ registerWidget({
         for (const s of g.subs) list.appendChild(renderTodayRow(s, true));
       }
       wrap.appendChild(list);
+
+      // 已过期折叠区：默认收起，展开状态持久化到 ctx.config.overdueOpen
+      const overdue = overdueGroups();
+      if (overdue.length > 0) {
+        const overdueTotal = overdue.reduce((n, g) => n + 1 + g.subs.length, 0);
+        const open = ctx.config.overdueOpen === true;
+        const sec = el('div', 'wf-task-flow-overdue');
+        const ohead = el('button', 'wf-task-flow-overduehead', `${open ? '▾' : '▸'} 已过期 · ${overdueTotal}`);
+        ohead.addEventListener('click', () => {
+          ctx.setConfig({ overdueOpen: !open });
+          renderContent();
+        });
+        sec.appendChild(ohead);
+        if (open) {
+          const olist = el('div', 'wf-task-flow-overduelist');
+          for (const g of overdue) {
+            olist.appendChild(renderOverdueRow(g.task));
+            for (const s of g.subs) olist.appendChild(renderOverdueRow(s, true));
+          }
+          sec.appendChild(olist);
+        }
+        wrap.appendChild(sec);
+      }
 
       // 今日统计：按任务聚合今天的番茄钟记录
       const stats = el('div', 'wf-task-flow-todaystats');
@@ -1362,6 +1440,18 @@ registerWidget({
         totalMin += agg.min;
       }
       box.appendChild(el('div', 'total', `总计：${totalN} 个番茄 · ${totalMin} 分钟`));
+    }
+
+    /** 过期行：复用今日行的全部交互，加 overdue 类 + 标题前的过期日期小字 */
+    function renderOverdueRow(t: Task, isSub = false): HTMLElement {
+      const row = renderTodayRow(t, isSub);
+      row.classList.add('overdue');
+      const when = t.dueDate ?? t.scheduledStart;
+      if (when) {
+        const tag = el('span', 'wf-task-flow-overduedate', `${fmtWhen(when)} ·`);
+        row.querySelector('.wf-task-flow-todotitle')?.before(tag);
+      }
+      return row;
     }
 
     /* ---------- schedule (week grid) ---------- */
