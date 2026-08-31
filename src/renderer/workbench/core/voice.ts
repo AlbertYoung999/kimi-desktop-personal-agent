@@ -17,6 +17,17 @@ let playing = false;
 let turnActive = false;
 /** 本轮回复的播报语言：跟随回复内容的主语言（首句判定时锁定，整段统一） */
 let turnLang: 'zh' | 'en' | null = null;
+/** 播报门控缓存：总开关 && Zen 开关，每轮回合开始时刷一次（不逐句 invoke） */
+let speakZen = true;
+
+async function refreshSpeakGate(): Promise<void> {
+  try {
+    const s = await window.kimi.getSettings();
+    speakZen = s.ttsEnabled !== false && s.ttsEnabledZen !== false;
+  } catch {
+    // 读取失败保留上次值
+  }
+}
 
 const SENTENCE_END = /[。！？!?…\n]/;
 
@@ -54,6 +65,11 @@ async function pump(): Promise<void> {
   playing = true;
   try {
     while (queue.length > 0) {
+      // 门控：总开关或 Zen 开关关闭则丢弃本轮队列
+      if (!speakZen) {
+        queue.length = 0;
+        break;
+      }
       const sentence = queue.shift()!;
       await window.kimi.ttsSpeak(sentence, turnLang ?? undefined).catch(() => undefined);
     }
@@ -70,6 +86,7 @@ function resetTurn(): void {
 }
 
 export function initVoice(): void {
+  void refreshSpeakGate();
   void window.kimi
     .getSettings()
     .then((s) => {
@@ -89,6 +106,7 @@ export function initVoice(): void {
       resetTurn();
       turnActive = true;
       turnLang = null;
+      void refreshSpeakGate(); // 每轮回合刷一次门控缓存
     }
     buffer += e.text;
     drainSentences();

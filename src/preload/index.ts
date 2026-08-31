@@ -60,6 +60,16 @@ contextBridge.exposeInMainWorld('kimi', {
   onLoadSession: on<string>(IPC.loadSessionInChat),
   reportFocusStatus: (status: unknown): void => void ipcRenderer.send(IPC.focusStatus, status),
   onFocusStatus: on<unknown>(IPC.evFocusStatus),
+  // pomodoro by task + 今日待办桌面面板 (v5.0)
+  pomodoroStart: (taskId: string, durationMin?: number): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.wbPomodoroStart, taskId, durationMin),
+  pomodoroStop: (completed: boolean): Promise<unknown> => ipcRenderer.invoke(IPC.wbPomodoroStop, completed),
+  pomodoroState: (): Promise<unknown> => ipcRenderer.invoke(IPC.wbPomodoroState),
+  pomodoroList: (taskId?: string): Promise<unknown> => ipcRenderer.invoke(IPC.wbPomodoroList, taskId),
+  onPomodoroState: on<unknown>(IPC.evPomodoroState),
+  toggleTodoPanel: (): void => void ipcRenderer.send(IPC.toggleTodoPanel),
+  resizeTodoPanel: (w: number, h: number): void => void ipcRenderer.send(IPC.resizeTodoPanel, w, h),
+  onTasksChanged: on<void>(IPC.evTasksChanged),
   homeAsk: (text: string): Promise<string> => ipcRenderer.invoke(IPC.homeAsk, text),
   homeAskImage: (text: string, image: unknown): Promise<string> => ipcRenderer.invoke(IPC.homeAskImage, text, image),
   mainHistory: (): Promise<{ role: string; text: string; at: number }[]> => ipcRenderer.invoke(IPC.homeMainHistory),

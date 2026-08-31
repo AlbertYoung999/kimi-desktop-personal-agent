@@ -52,6 +52,9 @@ export interface Task {
   sessionId?: string; // ACP session created from this task
   projectId?: string; // 挂载的项目；空 = 默认项目
   recurrence?: TaskRecurrence; // 重复任务频率（默认 none）
+  parentId?: string; // 子任务：挂载的主任务 id（只支持一层）
+  scheduledStart?: string; // 日程：计划执行开始时间 ISO
+  scheduledEnd?: string; // 日程：计划执行结束时间 ISO
   createdAt: number;
   updatedAt: number;
 }
@@ -118,4 +121,25 @@ export interface FocusRecord {
   minutes: number;
   completedAt: number;
   note: string;
+}
+
+// ---- pomodoro (by 任务的番茄钟，v5.0) ----
+
+/** 一条已结束的番茄钟记录（pomodoro_sessions 表） */
+export interface PomodoroSession {
+  id: number;
+  taskId: string;
+  startedAt: number;
+  endedAt?: number;
+  minutes: number; // 实际专注分钟数
+  completed: boolean; // true = 完整跑完；false = 提前停止
+}
+
+/** 进行中的番茄钟状态（main 进程持有，向各窗口广播） */
+export interface PomodoroState {
+  active: boolean;
+  taskId?: string;
+  taskTitle?: string;
+  startedAt?: number;
+  durationMin?: number; // 目标时长（默认 25）
 }

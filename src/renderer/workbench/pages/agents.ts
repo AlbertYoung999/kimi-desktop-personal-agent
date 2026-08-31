@@ -104,6 +104,8 @@ function injectStyle(): void {
 
     .${P}-tool { display: flex; align-items: center; gap: 12px; padding: 8px 2px; }
     .${P}-tool + .${P}-tool { border-top: 1px solid rgba(0, 240, 255, 0.07); }
+    .${P}-tool.dim { opacity: 0.45; }
+    .${P}-tool.dim .${P}-switch { cursor: default; }
     .${P}-tool-name { font-family: var(--mono); font-size: 11.5px; color: var(--fg); width: 168px; flex-shrink: 0; }
     .${P}-tool-desc { font-family: var(--mono); font-size: 10.5px; color: var(--muted); flex: 1; min-width: 0; }
 
@@ -239,6 +241,58 @@ export function initAgentsPage(): void {
   const voicePanel = section('voice', '声音 VOICE');
   type TtsInfo = Awaited<ReturnType<typeof window.kimi.ttsVoices>>;
   let tts: TtsInfo | null = null;
+
+  // 自动播报：总开关 + 分场景开关（undefined 视为开；总开关关闭时分场景开关置灰）
+  const speakTitle = document.createElement('div');
+  speakTitle.className = `${P}-hint`;
+  speakTitle.style.margin = '0 0 2px';
+  speakTitle.textContent = '自动播报';
+  voicePanel.appendChild(speakTitle);
+  type SpeakKey = 'ttsEnabled' | 'ttsEnabledZen' | 'ttsEnabledChat';
+  const SPEAK_TOGGLES: { key: SpeakKey; label: string; desc: string }[] = [
+    { key: 'ttsEnabled', label: '全部', desc: 'TTS 总开关，关闭后任何场景都不自动播报' },
+    { key: 'ttsEnabledZen', label: 'Zen 模式', desc: 'workbench 主会话回复播报' },
+    { key: 'ttsEnabledChat', label: '悬浮窗对话', desc: '悬浮窗普通会话回复播报' },
+  ];
+  const speakInputs: Partial<Record<SpeakKey, HTMLInputElement>> = {};
+  const speakRows: Partial<Record<SpeakKey, HTMLElement>> = {};
+  const refreshSpeakDim = () => {
+    const masterOn = speakInputs.ttsEnabled?.checked ?? true;
+    for (const key of ['ttsEnabledZen', 'ttsEnabledChat'] as const) {
+      const input = speakInputs[key];
+      if (!input) continue;
+      input.disabled = !masterOn;
+      speakRows[key]?.classList.toggle('dim', !masterOn);
+    }
+  };
+  for (const t of SPEAK_TOGGLES) {
+    const row = document.createElement('div');
+    row.className = `${P}-tool`;
+    const name = document.createElement('span');
+    name.className = `${P}-tool-name`;
+    name.textContent = t.label;
+    const desc = document.createElement('span');
+    desc.className = `${P}-tool-desc`;
+    desc.textContent = t.desc;
+    const sw = document.createElement('label');
+    sw.className = `${P}-switch`;
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = true; // 缺省视为开
+    input.onchange = () => {
+      void window.kimi.setSettings({ [t.key]: input.checked }).catch(() => undefined);
+      if (t.key === 'ttsEnabled') refreshSpeakDim();
+    };
+    speakInputs[t.key] = input;
+    speakRows[t.key] = row;
+    sw.append(input, document.createElement('i'));
+    row.append(name, desc, sw);
+    voicePanel.appendChild(row);
+  }
+  const speakHint = document.createElement('div');
+  speakHint.className = `${P}-hint`;
+  speakHint.textContent = '回复生成后自动语音播报；主会话回复始终走 Zen 模式开关。';
+  voicePanel.appendChild(speakHint);
 
   // provider 选项卡：Piper（本地神经网络）/ macOS say
   const providerRow = document.createElement('div');
@@ -483,7 +537,7 @@ export function initAgentsPage(): void {
     trigPanel.appendChild(row);
   }
 
-  // settings 一次读取，回填权限模式 + 反应回路
+  // settings 一次读取，回填权限模式 + 反应回路 + 自动播报
   void window.kimi.getSettings().then((s) => {
     permSeg.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
       b.classList.toggle('on', b.dataset.mode === (s.permissionMode ?? 'default'));
@@ -492,6 +546,11 @@ export function initAgentsPage(): void {
       const input = trigInputs[t.key];
       if (input) input.checked = s.triggers?.[t.key] !== false;
     }
+    for (const t of SPEAK_TOGGLES) {
+      const input = speakInputs[t.key];
+      if (input) input.checked = s[t.key] !== false;
+    }
+    refreshSpeakDim();
   }).catch(() => undefined);
 
   // ---------- 7. 数据 ----------

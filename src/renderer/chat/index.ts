@@ -326,6 +326,21 @@ window.kimi.onToolCall((e) => {
   renderToolLine();
 });
 
+// ---------- TTS 播报（悬浮窗普通会话；主会话由 workbench voice.ts 统一播报） ----------
+async function speakReply(sessionId: string, text: string): Promise<void> {
+  if (!text) return;
+  try {
+    const s = await window.kimi.getSettings();
+    if (s.ttsEnabled === false || s.ttsEnabledChat === false) return;
+    // 主会话不在这里播报，避免和 voice.ts 双重播报
+    if (s.mainSessionId && sessionId === s.mainSessionId) return;
+    const lang = /[一-鿿]/.test(text) ? 'zh' : 'en';
+    await window.kimi.ttsSpeak(text, lang).catch(() => undefined);
+  } catch {
+    // 设置读取失败则不播报
+  }
+}
+
 window.kimi.onTurnDone((e) => {
   if (!currentSession || e.sessionId !== currentSession.sessionId) return;
   removeLoading();
@@ -337,6 +352,10 @@ window.kimi.onTurnDone((e) => {
   currentThoughtBody = null;
   window.kimi.setBallState('idle');
   updateSendBtn();
+  // TTS 播报本轮回复全文（门控：总开关 + 悬浮窗开关；主会话跳过）
+  const replyText = currentAgentText.trim();
+  currentAgentText = '';
+  void speakReply(e.sessionId, replyText);
   // update session title from first user message
   const firstUser = messagesEl.querySelector('.msg.user div');
   if (currentSession && !currentSession.title && firstUser?.textContent) {
@@ -417,6 +436,7 @@ function renderQueueBar() {
 
 async function doSend(msg: QueuedMessage) {
   const session = await ensureSession();
+  window.kimi.ttsStop(); // 发送新消息打断上一轮播报
   addMessage('user', msg.text, msg.image, msg.quote);
   lastSentText = msg.text; // 主进程回投的 kind:'user' chunk 据此去重
   scrollToBottom(true); // user's own message always snaps to bottom
@@ -618,6 +638,7 @@ function renderSessionList() {
 }
 
 async function switchSession(sessionId: string) {
+  window.kimi.ttsStop(); // 切换会话打断播报
   messagesEl.innerHTML = '';
   const { meta, history, live } = await window.kimi.loadSession(sessionId);
   currentSession = meta;
@@ -642,6 +663,7 @@ async function switchSession(sessionId: string) {
 }
 
 $('btn-new').onclick = async () => {
+  window.kimi.ttsStop(); // 新会话打断播报
   messagesEl.innerHTML = '';
   currentSession = await window.kimi.newSession();
   $('session-title').textContent = '新会话';

@@ -461,10 +461,14 @@ window.kimi.onTurnDone((e) => {
     setOrbState('ready');
     return;
   }
-  // TTS 播报：speaking 状态，结束后回 ready
+  // TTS 播报：speaking 状态，结束后回 ready；总开关 / Zen 开关关闭则跳过
   setOrbState('speaking');
-  window.kimi
-    .ttsSpeak(reply)
+  void window.kimi
+    .getSettings()
+    .then((s) => {
+      if (s.ttsEnabled === false || s.ttsEnabledZen === false) return;
+      return window.kimi.ttsSpeak(reply).catch(() => undefined);
+    })
     .catch(() => undefined)
     .finally(() => {
       // 若期间已开始新一轮对话，不覆盖其状态

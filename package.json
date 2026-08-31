@@ -1,7 +1,7 @@
 {
   "name": "kimi-desktop-personal-agent",
   "productName": "Kimi Desktop Personal Agent",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Kimi desktop personal agent — voice-first home, self-evolving workbench, ACP client for kimi-code CLI",
   "license": "MIT",
   "author": "AlbertYang",
@@ -20,7 +20,7 @@
   "scripts": {
     "build": "npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:renderer": "esbuild src/renderer/ball/index.ts --bundle --outfile=dist/renderer/ball/index.js --format=iife && esbuild src/renderer/chat/index.ts --bundle --outfile=dist/renderer/chat/index.js --format=iife && esbuild src/renderer/workbench/index.ts --bundle --outfile=dist/renderer/workbench/index.js --format=iife && esbuild src/renderer/home/index.ts --bundle --outfile=dist/renderer/home/index.js --format=iife && cp src/renderer/ball/index.html src/renderer/ball/style.css dist/renderer/ball/ && cp src/renderer/chat/index.html src/renderer/chat/style.css dist/renderer/chat/ && cp src/renderer/workbench/index.html src/renderer/workbench/style.css dist/renderer/workbench/ && cp src/renderer/home/index.html dist/renderer/home/ && mkdir -p dist/renderer/preview dist/renderer/focus-pill && cp src/renderer/preview/index.html dist/renderer/preview/ && cp src/renderer/focus-pill/index.html dist/renderer/focus-pill/",
+    "build:renderer": "esbuild src/renderer/ball/index.ts --bundle --outfile=dist/renderer/ball/index.js --format=iife && esbuild src/renderer/chat/index.ts --bundle --outfile=dist/renderer/chat/index.js --format=iife && esbuild src/renderer/workbench/index.ts --bundle --outfile=dist/renderer/workbench/index.js --format=iife && esbuild src/renderer/home/index.ts --bundle --outfile=dist/renderer/home/index.js --format=iife && cp src/renderer/ball/index.html src/renderer/ball/style.css dist/renderer/ball/ && cp src/renderer/chat/index.html src/renderer/chat/style.css dist/renderer/chat/ && cp src/renderer/workbench/index.html src/renderer/workbench/style.css dist/renderer/workbench/ && cp src/renderer/home/index.html dist/renderer/home/ && mkdir -p dist/renderer/preview dist/renderer/focus-pill && cp src/renderer/preview/index.html dist/renderer/preview/ && cp src/renderer/focus-pill/index.html dist/renderer/focus-pill/ && esbuild src/renderer/todo-panel/index.ts --bundle --outfile=dist/renderer/todo-panel/index.js --format=iife && cp src/renderer/todo-panel/index.html dist/renderer/todo-panel/",
     "watch": "concurrently \"tsc -p tsconfig.main.json -w\" \"npm run build:renderer -- --watch\"",
     "start": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"

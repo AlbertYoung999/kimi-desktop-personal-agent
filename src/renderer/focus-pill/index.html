@@ -47,11 +47,24 @@
   </div>
   <script>
     const pill = document.getElementById('pill');
+    let tickTimer = null;
     window.kimi.onFocusStatus((s) => {
-      const total = Math.max(0, Math.round(s.remainingMs / 1000));
-      const mm = String(Math.floor(total / 60)).padStart(2, '0');
-      const ss = String(total % 60).padStart(2, '0');
-      document.getElementById('time').textContent = `${mm}:${ss}`;
+      const timeEl = document.getElementById('time');
+      const render = (totalSec) => {
+        const total = Math.max(0, totalSec);
+        const mm = String(Math.floor(total / 60)).padStart(2, '0');
+        const ss = String(total % 60).padStart(2, '0');
+        timeEl.textContent = `${mm}:${ss}`;
+      };
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      if (s.startedAt && s.durationMin) {
+        // 番茄钟等带绝对时间的场景：本地每秒倒计时
+        const tick = () => render(Math.round((s.startedAt + s.durationMin * 60000 - Date.now()) / 1000));
+        tick();
+        tickTimer = setInterval(tick, 1000);
+      } else {
+        render(Math.round((s.remainingMs || 0) / 1000));
+      }
       document.getElementById('mode').textContent = s.mode;
       document.getElementById('task').textContent = s.task || '';
       pill.classList.toggle('paused', !!s.paused);

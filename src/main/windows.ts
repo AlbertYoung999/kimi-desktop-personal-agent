@@ -303,6 +303,67 @@ export function movePillTo(x: number, y: number): void {
   }
 }
 
+// ---------- todo panel (今日待办桌面小面板, v5.0) ----------
+
+let todoWin: BrowserWindow | null = null;
+/** 用户调整过的尺寸（本次运行内记住，重开面板沿用） */
+let todoSize = { width: 320, height: 440 };
+const TODO_MIN_W = 280;
+const TODO_MIN_H = 320;
+
+export function getTodoPanelWindow(): BrowserWindow | null {
+  return todoWin;
+}
+
+export function ensureTodoPanel(): BrowserWindow {
+  if (todoWin && !todoWin.isDestroyed()) return todoWin;
+  const display = screen.getPrimaryDisplay();
+  const { x, y, width } = display.workArea;
+  todoWin = new BrowserWindow({
+    width: todoSize.width,
+    height: todoSize.height,
+    x: x + width - todoSize.width - 24,
+    y: y + 60,
+    frame: false,
+    transparent: true,
+    resizable: false, // frameless 无原生缩放边，缩放走 resizeTodoPanel（右下角手柄）
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    show: false,
+    fullscreenable: false,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+  todoWin.setAlwaysOnTop(true, 'screen-saver');
+  todoWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  todoWin.loadFile(path.join(rendererDir(), 'todo-panel', 'index.html'));
+  todoWin.once('ready-to-show', () => todoWin?.show());
+  todoWin.on('closed', () => (todoWin = null));
+  return todoWin;
+}
+
+export function resizeTodoPanel(width: number, height: number): void {
+  if (!todoWin || todoWin.isDestroyed()) return;
+  todoSize = {
+    width: Math.max(TODO_MIN_W, Math.round(width)),
+    height: Math.max(TODO_MIN_H, Math.round(height)),
+  };
+  todoWin.setSize(todoSize.width, todoSize.height);
+}
+
+export function toggleTodoPanel(): void {
+  if (todoWin && !todoWin.isDestroyed()) {
+    todoWin.close();
+    todoWin = null;
+  } else {
+    ensureTodoPanel();
+  }
+}
+
 // ---------- fullscreen image preview ----------
 
 let previewWin: BrowserWindow | null = null;

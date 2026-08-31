@@ -1,5 +1,13 @@
 import { registerWidget } from '../core/registry';
-import type { Project, Task, TaskPriority, TaskRecurrence, TaskStatus } from '../../../shared/workbench-types';
+import type {
+  PomodoroSession,
+  PomodoroState,
+  Project,
+  Task,
+  TaskPriority,
+  TaskRecurrence,
+  TaskStatus,
+} from '../../../shared/workbench-types';
 import { DEFAULT_PROJECT_ID } from '../../../shared/workbench-types';
 
 /* ------------------------------------------------------------------ */
@@ -14,8 +22,10 @@ const CSS = `
   border: 1px solid var(--border); background: transparent; color: var(--muted);
   font: inherit; font-size: 11.5px; padding: 4px 10px; cursor: pointer;
 }
-.wf-task-flow-viewbtn:first-of-type { border-radius: 6px 0 0 6px; }
-.wf-task-flow-viewbtn:nth-of-type(2) { border-radius: 0 6px 6px 0; margin-left: -8px; border-left: none; }
+.wf-task-flow-viewgroup { display: flex; flex-shrink: 0; }
+.wf-task-flow-viewbtn:first-child { border-radius: 6px 0 0 6px; }
+.wf-task-flow-viewbtn:not(:first-child) { border-left: none; }
+.wf-task-flow-viewbtn:last-child { border-radius: 0 6px 6px 0; }
 .wf-task-flow-viewbtn.active { color: var(--neon); border-color: var(--border-strong); background: rgba(0,240,255,0.06); z-index: 1; position: relative; }
 .wf-task-flow-search {
   flex: 1; min-width: 60px; border: 1px solid var(--border); border-radius: 6px;
@@ -218,6 +228,135 @@ const CSS = `
 .wf-task-flow-btn.danger:hover { color: var(--error); border-color: var(--error); }
 .wf-task-flow-btn.session { color: var(--green); border-color: rgba(0,255,136,0.35); background: rgba(0,255,136,0.06); }
 .wf-task-flow-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* subtasks */
+.wf-task-flow-subprog { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 4px; }
+.wf-task-flow-sublist { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.wf-task-flow-sub {
+  display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted);
+  padding: 1px 0 1px 8px; border-left: 2px solid var(--border); cursor: pointer;
+}
+.wf-task-flow-sub:hover { color: var(--fg); }
+.wf-task-flow-subdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 5px currentColor; }
+.wf-task-flow-subtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-task-flow-sub.done .wf-task-flow-subtitle { color: var(--disabled); text-decoration: line-through; }
+.wf-task-flow-subsec { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; }
+.wf-task-flow-subsec-title { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--muted); }
+.wf-task-flow-subrow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.wf-task-flow-subrow input[type="checkbox"] { accent-color: var(--neon); margin: 0; flex-shrink: 0; cursor: pointer; }
+.wf-task-flow-subrow-title { flex: 1; min-width: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-task-flow-subrow-title:hover { color: var(--neon); }
+.wf-task-flow-subrow-title.done { color: var(--disabled); text-decoration: line-through; }
+.wf-task-flow-subdel {
+  border: none; background: none; color: var(--disabled); cursor: pointer;
+  font-size: 12px; width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0; padding: 0;
+}
+.wf-task-flow-subdel:hover { color: var(--error); background: rgba(255,68,68,0.1); }
+.wf-task-flow-subadd { display: flex; gap: 6px; }
+
+/* today view */
+.wf-task-flow-today { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.wf-task-flow-todayhead { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.wf-task-flow-todaytitle { font-family: var(--mono); font-size: 12px; color: var(--neon); letter-spacing: 1px; }
+.wf-task-flow-pinbtn { margin-left: auto; }
+.wf-task-flow-focusbar {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: rgba(0,240,255,0.06); color: var(--neon);
+  padding: 6px 10px; font-size: 12px;
+}
+.wf-task-flow-pomoreman { font-family: var(--mono); font-size: 10.5px; color: var(--neon); flex-shrink: 0; }
+.wf-task-flow-focusbar .wf-task-flow-pomoreman { margin-left: auto; font-size: 12px; }
+.wf-task-flow-todaylist { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.wf-task-flow-todaynone { color: var(--disabled); font-size: 12px; padding: 16px; text-align: center; }
+.wf-task-flow-todayrow {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px;
+}
+.wf-task-flow-todayrow:hover { border-color: var(--border-strong); }
+.wf-task-flow-todayrow.done { opacity: 0.45; }
+.wf-task-flow-todayrow.done .wf-task-flow-todotitle { text-decoration: line-through; }
+/* 子任务行：缩进一级 + 左侧细竖线，整体小一号 */
+.wf-task-flow-todayrow.sub {
+  margin-left: 24px; padding: 4px 10px; font-size: 11.5px;
+  border-left: 2px solid var(--border); border-radius: 0 8px 8px 0;
+  background: rgba(255,255,255,0.015);
+}
+.wf-task-flow-todayrow.sub .wf-task-flow-todot { width: 6px; height: 6px; }
+/* 行 hover 操作按钮：默认隐藏，hover 显示；计时中的 ⏹ 常显 */
+.wf-task-flow-todoacts { display: none; align-items: center; gap: 4px; flex-shrink: 0; }
+.wf-task-flow-todayrow:hover .wf-task-flow-todoacts, .wf-task-flow-todoacts.timing { display: flex; }
+.wf-task-flow-sessionbtn { color: var(--green); border-color: rgba(0,255,136,0.35); background: rgba(0,255,136,0.06); }
+.wf-task-flow-sessionbtn:hover { box-shadow: 0 0 10px rgba(0,255,136,0.35); }
+.wf-task-flow-todayrow input[type="checkbox"] { accent-color: var(--neon); margin: 0; flex-shrink: 0; cursor: pointer; }
+.wf-task-flow-todot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 6px currentColor; }
+.wf-task-flow-todotitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.wf-task-flow-todotitle:hover { color: var(--neon); }
+.wf-task-flow-todoparent { font-size: 10.5px; color: var(--disabled); flex-shrink: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-task-flow-todotime { font-family: var(--mono); font-size: 10px; color: var(--muted); flex-shrink: 0; }
+.wf-task-flow-todotime.overdue { color: var(--error); }
+.wf-task-flow-pomo {
+  width: 22px; height: 22px; padding: 0; border: 1px solid rgba(0,240,255,0.35); border-radius: 50%;
+  background: rgba(0,240,255,0.08); color: var(--neon); font-size: 9px; line-height: 1;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  transition: box-shadow 120ms var(--ease-in);
+}
+.wf-task-flow-pomo:hover { box-shadow: 0 0 10px rgba(0,240,255,0.35); }
+.wf-task-flow-pomo.timing { color: var(--error); border-color: rgba(255,68,68,0.4); background: rgba(255,68,68,0.08); }
+.wf-task-flow-pomo:disabled { opacity: 0.5; cursor: default; }
+.wf-task-flow-todaystats {
+  flex-shrink: 0; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px;
+  display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted);
+}
+.wf-task-flow-todaystats .total { color: var(--neon); font-family: var(--mono); }
+
+/* schedule view (week grid) */
+.wf-task-flow-sched { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.wf-task-flow-schedbody { flex: 1; display: flex; gap: 8px; min-height: 0; }
+.wf-task-flow-schedside {
+  width: 148px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px;
+  padding: 6px; background: rgba(255,255,255,0.02);
+}
+.wf-task-flow-schedside-title { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--disabled); padding: 2px 2px 4px; }
+.wf-task-flow-unsched {
+  font-size: 11px; line-height: 1.3; padding: 3px 6px; border-radius: 4px;
+  background: var(--card); border: 1px solid var(--border); border-left: 2px solid var(--neon);
+  cursor: grab; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0;
+}
+.wf-task-flow-unsched:hover { border-color: var(--border-strong); }
+.wf-task-flow-schedscroll { flex: 1; overflow: auto; min-width: 0; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; }
+.wf-task-flow-schedgrid { display: grid; grid-template-columns: 44px repeat(7, minmax(88px, 1fr)); width: 100%; min-width: min-content; }
+.wf-task-flow-schedday {
+  font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: center;
+  padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.wf-task-flow-schedday.today { color: var(--neon); text-shadow: 0 0 8px rgba(0,240,255,0.45); }
+.wf-task-flow-schedtimes { position: relative; border-right: 1px solid rgba(255,255,255,0.06); }
+.wf-task-flow-schedtime {
+  position: absolute; right: 4px; transform: translateY(-50%);
+  font-family: var(--mono); font-size: 9px; color: var(--disabled);
+}
+.wf-task-flow-schedcol {
+  position: relative; border-right: 1px solid rgba(255,255,255,0.05);
+  background-image: repeating-linear-gradient(to bottom, rgba(255,255,255,0.04) 0 1px, transparent 1px 36px);
+}
+.wf-task-flow-schedcol.today { background-color: rgba(0,240,255,0.03); }
+.wf-task-flow-schedcol.dragover { background-color: rgba(0,240,255,0.06); }
+.wf-task-flow-schedblock {
+  position: absolute; left: 2px; right: 2px; border-radius: 4px;
+  background: rgba(0,240,255,0.08); border-left: 2px solid var(--neon);
+  font-size: 10px; line-height: 1.3; padding: 2px 4px; overflow: hidden; cursor: grab; z-index: 1;
+}
+.wf-task-flow-schedblock:hover { background: rgba(0,240,255,0.14); }
+.wf-task-flow-schedblock .t { font-family: var(--mono); font-size: 9px; color: var(--muted); }
+.wf-task-flow-schedblock.done { opacity: 0.45; text-decoration: line-through; }
+.wf-task-flow-schedblock.dragging { opacity: 0.4; }
+.wf-task-flow-schedresize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
+.wf-task-flow-schedghost {
+  position: absolute; left: 2px; right: 2px; border-radius: 4px;
+  border: 1px dashed var(--neon); background: rgba(0,240,255,0.1); pointer-events: none; z-index: 2;
+}
 `;
 
 /* ------------------------------------------------------------------ */
@@ -246,6 +385,15 @@ const PRIORITY_COLOR: Record<TaskPriority, string> = {
 };
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+
+/** 视图模式：看板 / 月历 / 今日 / 日程（周视图） */
+type ViewMode = 'board' | 'calendar' | 'today' | 'schedule';
+const VIEW_MODES: ViewMode[] = ['board', 'calendar', 'today', 'schedule'];
+
+/* 日程视图常量：纵轴 06:00–24:00，每小时 36px */
+const SCHED_START_HOUR = 6;
+const SCHED_HOURS = 18;
+const SCHED_HOUR_H = 36;
 
 const RECURRENCE_ORDER: TaskRecurrence[] = ['none', 'daily', 'workdays', 'weekly'];
 const RECURRENCE_LABEL: Record<TaskRecurrence, string> = {
@@ -300,6 +448,11 @@ function dateKey(s: string): string {
   if (isLegacyDate(s)) return s;
   const d = new Date(s);
   if (isNaN(d.getTime())) return s;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** Date → 本地日期 key YYYY-MM-DD（日程视图按列归格用） */
+function dateKeyOf(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
@@ -403,15 +556,20 @@ registerWidget({
     }
 
     const now = new Date();
+    const savedView = typeof ctx.config.view === 'string' ? ctx.config.view : '';
     const state = {
       tasks: [] as Task[],
       projects: [] as Project[],
       /** 'all' = 全部项目，否则为项目 id */
       projectId: (typeof ctx.config.projectId === 'string' ? ctx.config.projectId : DEFAULT_PROJECT_ID) as string,
-      view: (ctx.config.view === 'calendar' ? 'calendar' : 'board') as 'board' | 'calendar',
+      view: (VIEW_MODES.includes(savedView as ViewMode) ? savedView : 'board') as ViewMode,
       query: '',
       calYear: now.getFullYear(),
       calMonth: now.getMonth(),
+      /** 日程视图：相对当前周的偏移（不持久化） */
+      weekOffset: 0,
+      /** 进行中的番茄钟（main 进程推送 + mount 时拉取） */
+      pomo: { active: false } as PomodoroState,
     };
 
     const root = el('div', 'wf-task-flow-root');
@@ -455,6 +613,8 @@ registerWidget({
       // PRD：assign 给 Agent 后任务进入进行中，否则 Agent 不会执行
       t.status = 'in_progress';
       t.completedAt = undefined;
+      // 子任务：把主任务上下文一并带给 agent
+      const parent = t.parentId ? state.tasks.find((x) => x.id === t.parentId) : undefined;
       const payload = JSON.stringify({
         task: {
           id: t.id,
@@ -467,6 +627,17 @@ registerWidget({
           dueDate: t.dueDate,
           tags: t.tags,
         },
+        ...(parent
+          ? {
+              parent: {
+                id: parent.id,
+                title: parent.title,
+                description: parent.description,
+                notes: parent.notes,
+                dueDate: parent.dueDate,
+              },
+            }
+          : {}),
         context: '你需要帮我完成这个任务，请基于描述给出执行建议或直接开始。',
       });
       const sessionId = await ctx.api.startTaskSession(payload);
@@ -504,6 +675,10 @@ registerWidget({
 
     const btnBoard = el('button', 'wf-task-flow-viewbtn', '看板');
     const btnCal = el('button', 'wf-task-flow-viewbtn', '日历');
+    const btnToday = el('button', 'wf-task-flow-viewbtn', '今日');
+    const btnSched = el('button', 'wf-task-flow-viewbtn', '日程');
+    const viewGroup = el('div', 'wf-task-flow-viewgroup');
+    viewGroup.append(btnBoard, btnCal, btnToday, btnSched);
     const projSel = el('select', 'wf-task-flow-projsel') as HTMLSelectElement;
     projSel.title = '切换项目';
     const projEditBtn = el('button', 'wf-task-flow-projeditbtn', '✎');
@@ -511,7 +686,7 @@ registerWidget({
     const search = el('input', 'wf-task-flow-search') as HTMLInputElement;
     search.placeholder = '搜索任务…';
     const btnNew = el('button', 'wf-task-flow-newbtn', '＋ 新建');
-    topbar.append(btnBoard, btnCal, projSel, projEditBtn, search, btnNew);
+    topbar.append(viewGroup, projSel, projEditBtn, search, btnNew);
 
     const NEW_PROJECT_VALUE = '__new__';
 
@@ -620,9 +795,11 @@ registerWidget({
     function syncViewButtons(): void {
       btnBoard.classList.toggle('active', state.view === 'board');
       btnCal.classList.toggle('active', state.view === 'calendar');
+      btnToday.classList.toggle('active', state.view === 'today');
+      btnSched.classList.toggle('active', state.view === 'schedule');
     }
 
-    function setView(v: 'board' | 'calendar'): void {
+    function setView(v: ViewMode): void {
       state.view = v;
       ctx.setConfig({ view: v });
       syncViewButtons();
@@ -631,6 +808,8 @@ registerWidget({
 
     btnBoard.addEventListener('click', () => setView('board'));
     btnCal.addEventListener('click', () => setView('calendar'));
+    btnToday.addEventListener('click', () => setView('today'));
+    btnSched.addEventListener('click', () => setView('schedule'));
     search.addEventListener('input', () => {
       state.query = search.value.trim().toLowerCase();
       renderContent();
@@ -646,8 +825,9 @@ registerWidget({
 
       for (const col of COLUMNS) {
         // 列内排序：优先级 urgent→low，同优先级按 updatedAt 越近越靠前
+        // 子任务不占独立卡片，挂在主任务卡片下方，不参与列排序
         const colTasks = tasks
-          .filter((t) => t.status === col.id)
+          .filter((t) => t.status === col.id && !t.parentId)
           .sort(
             (a, b) =>
               PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority) || b.updatedAt - a.updatedAt,
@@ -756,6 +936,29 @@ registerWidget({
       projDot.style.color = projColor;
       projTag.append(projDot, document.createTextNode(projectName(pid)));
       main.appendChild(projTag);
+
+      // 子任务：进度 + 缩进列表（仅主任务；子任务点击打开自己的编辑面板）
+      if (!t.parentId) {
+        const subs = state.tasks.filter((x) => x.parentId === t.id);
+        if (subs.length > 0) {
+          const doneN = subs.filter((x) => x.status === 'done' || x.status === 'canceled').length;
+          main.appendChild(el('div', 'wf-task-flow-subprog', `↳ 子任务 ${doneN}/${subs.length}`));
+          const subList = el('div', 'wf-task-flow-sublist');
+          for (const s of subs) {
+            const row = el('div', `wf-task-flow-sub${s.status === 'done' ? ' done' : ''}`);
+            const sdot = el('span', 'wf-task-flow-subdot');
+            sdot.style.background = s.status === 'done' ? 'var(--green)' : PRIORITY_COLOR[s.priority];
+            sdot.style.color = sdot.style.background;
+            row.append(sdot, el('span', 'wf-task-flow-subtitle', s.title));
+            row.addEventListener('click', (e) => {
+              e.stopPropagation();
+              openDetail(s.id);
+            });
+            subList.appendChild(row);
+          }
+          main.appendChild(subList);
+        }
+      }
 
       card.append(dot, main);
 
@@ -897,6 +1100,509 @@ registerWidget({
       renderContent();
     }
 
+    /* ---------- pomodoro ---------- */
+
+    /** 番茄钟记录缓存（30 秒），今日统计用 */
+    let pomoCache: { at: number; sessions: PomodoroSession[] } | null = null;
+
+    async function pomoSessions(): Promise<PomodoroSession[]> {
+      if (pomoCache && Date.now() - pomoCache.at < 30_000) return pomoCache.sessions;
+      try {
+        const sessions = await window.kimi.pomodoroList();
+        pomoCache = { at: Date.now(), sessions };
+        return sessions;
+      } catch {
+        return pomoCache?.sessions ?? [];
+      }
+    }
+
+    /** 进行中番茄钟的剩余时间 mm:ss（本地按 startedAt + durationMin 推算） */
+    function pomoRemain(): string {
+      const p = state.pomo;
+      if (!p.active || !p.startedAt || !p.durationMin) return '';
+      const ms = p.startedAt + p.durationMin * 60_000 - Date.now();
+      const s = Math.max(0, Math.round(ms / 1000));
+      return `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`;
+    }
+
+    // 每秒刷新今日视图里的倒计时（元素带 data-wf-pomo-remain 标记）
+    const pomoTick = window.setInterval(() => {
+      if (!body.isConnected) {
+        window.clearInterval(pomoTick);
+        return;
+      }
+      if (!state.pomo.active) return;
+      const text = pomoRemain();
+      content.querySelectorAll('[data-wf-pomo-remain]').forEach((n) => {
+        n.textContent = text;
+      });
+    }, 1000);
+
+    window.kimi.onPomodoroState((p) => {
+      state.pomo = p;
+      pomoCache = null; // 开始/停止后立即让今日统计重拉
+      if (body.isConnected && state.view === 'today') renderContent();
+    });
+    void window.kimi.pomodoroState().then((p) => {
+      state.pomo = p;
+      if (body.isConnected && state.view === 'today') renderContent();
+    });
+
+    /* ---------- today ---------- */
+
+    /** 任务自身是否命中今日条件：今天截止 / 今天排期 / 进行中 / 今天开始 */
+    function meetsToday(t: Task): boolean {
+      const tk = todayStr();
+      return (
+        (!!t.dueDate && dateKey(t.dueDate) === tk) ||
+        (!!t.scheduledStart && dateKey(t.scheduledStart) === tk) ||
+        t.status === 'in_progress' ||
+        (!!t.startDate && dateKey(t.startDate) === tk)
+      );
+    }
+
+    /**
+     * 今日待办（分层）：命中今日条件的任务 + 其父任务命中今日条件的子任务。
+     * 子任务挂在父任务的 subs 里随组渲染；父任务不在列表时子任务才作顶层项（孤儿子任务）。
+     * 今天完成的（completedAt 是今天）保留展示；排序按组：未完成在前 done 置底、优先级、updatedAt，
+     * 组内子任务按优先级排，父任务 done 置底时子任务跟随
+     */
+    interface TodayGroup {
+      task: Task;
+      subs: Task[];
+    }
+
+    function todayGroups(): TodayGroup[] {
+      const tk = todayStr();
+      const all = filtered();
+      const parentMeets = new Set<string>();
+      for (const t of all) {
+        // 父任务命中今日条件即纳入（done 的父任务 in_progress 为 false，但日期条件仍可能命中）
+        if (!t.parentId && meetsToday(t)) parentMeets.add(t.id);
+      }
+      const listed = all.filter((t) => {
+        if (t.status === 'canceled') return false;
+        const relevant = meetsToday(t) || (!!t.parentId && parentMeets.has(t.parentId));
+        if (!relevant) return false;
+        // 已完成的只在今天完成的才保留展示
+        if (t.status === 'done') return !!t.completedAt && dateKey(t.completedAt) === tk;
+        return true;
+      });
+      const listedIds = new Set(listed.map((t) => t.id));
+      const byPrio = (a: Task, b: Task): number =>
+        PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority) || b.updatedAt - a.updatedAt;
+
+      const groups: TodayGroup[] = [];
+      const groupOf = new Map<string, TodayGroup>();
+      for (const t of listed) {
+        if (t.parentId && listedIds.has(t.parentId)) continue; // 父在列表 → 作为子项
+        const g: TodayGroup = { task: t, subs: [] };
+        groups.push(g);
+        groupOf.set(t.id, g);
+      }
+      for (const t of listed) {
+        if (t.parentId && listedIds.has(t.parentId)) groupOf.get(t.parentId)!.subs.push(t);
+      }
+      for (const g of groups) g.subs.sort(byPrio);
+      return groups.sort(
+        (a, b) => Number(a.task.status === 'done') - Number(b.task.status === 'done') || byPrio(a.task, b.task),
+      );
+    }
+
+    function renderToday(container: HTMLElement): void {
+      const wrap = el('div', 'wf-task-flow-today');
+
+      const groups = todayGroups();
+      const total = groups.reduce((n, g) => n + 1 + g.subs.length, 0);
+      const head = el('div', 'wf-task-flow-todayhead');
+      head.appendChild(el('span', 'wf-task-flow-todaytitle', `今日 · ${total}`));
+      const pin = el('button', 'wf-task-flow-btn wf-task-flow-pinbtn', '📌 钉到桌面');
+      pin.title = '在桌面显示今日待办面板';
+      pin.addEventListener('click', () => window.kimi.toggleTodoPanel());
+      head.appendChild(pin);
+      wrap.appendChild(head);
+
+      // 番茄钟进行中：顶部专注条（关联任务不在列表里也显示）
+      if (state.pomo.active) {
+        const bar = el('div', 'wf-task-flow-focusbar');
+        bar.appendChild(el('span', '', `正在专注：${state.pomo.taskTitle ?? ''}`));
+        const remain = el('span', 'wf-task-flow-pomoreman', pomoRemain());
+        remain.setAttribute('data-wf-pomo-remain', '');
+        bar.appendChild(remain);
+        wrap.appendChild(bar);
+      }
+
+      const list = el('div', 'wf-task-flow-todaylist');
+      if (groups.length === 0) {
+        list.appendChild(el('div', 'wf-task-flow-todaynone', '今天没有待办任务'));
+      }
+      for (const g of groups) {
+        list.appendChild(renderTodayRow(g.task));
+        for (const s of g.subs) list.appendChild(renderTodayRow(s, true));
+      }
+      wrap.appendChild(list);
+
+      // 今日统计：按任务聚合今天的番茄钟记录
+      const stats = el('div', 'wf-task-flow-todaystats');
+      stats.appendChild(el('div', 'wf-task-flow-subsec-title', '今日统计'));
+      wrap.appendChild(stats);
+      void renderTodayStats(stats);
+
+      container.appendChild(wrap);
+    }
+
+    /** isSub = 作为父任务行下方的缩进子项渲染（孤儿子任务作顶层项时 isSub=false，保留 ↳ 父任务名标注） */
+    function renderTodayRow(t: Task, isSub = false): HTMLElement {
+      const isDone = t.status === 'done';
+      const row = el('div', `wf-task-flow-todayrow${isDone ? ' done' : ''}${isSub ? ' sub' : ''}`);
+
+      const cb = el('input') as HTMLInputElement;
+      cb.type = 'checkbox';
+      cb.checked = isDone;
+      cb.title = isDone ? '取消完成' : '完成';
+      cb.addEventListener('change', () => {
+        t.status = cb.checked ? 'done' : 'todo';
+        t.completedAt = cb.checked ? new Date().toISOString() : undefined;
+        void persist(t);
+      });
+      row.appendChild(cb);
+
+      const dot = el('span', 'wf-task-flow-todot');
+      dot.style.background = PRIORITY_COLOR[t.priority];
+      dot.style.color = PRIORITY_COLOR[t.priority];
+      dot.title = `优先级：${PRIORITY_LABEL[t.priority]}`;
+      row.appendChild(dot);
+
+      const title = el('span', 'wf-task-flow-todotitle', t.title);
+      title.title = t.title;
+      title.addEventListener('click', () => openDetail(t.id));
+      row.appendChild(title);
+
+      if (t.parentId && !isSub) {
+        const parent = state.tasks.find((x) => x.id === t.parentId);
+        if (parent) row.appendChild(el('span', 'wf-task-flow-todoparent', `↳ ${parent.title}`));
+      }
+
+      const isTiming = state.pomo.active && state.pomo.taskId === t.id;
+      if (isTiming) {
+        const remain = el('span', 'wf-task-flow-pomoreman', pomoRemain());
+        remain.setAttribute('data-wf-pomo-remain', '');
+        row.appendChild(remain);
+      } else {
+        // 排期时间显示时间段（10:00–11:00）；🕐 与番茄钟按钮的 ⏰ 区分
+        const when = t.scheduledStart
+          ? `🕐 ${clockOf(t.scheduledStart)}${t.scheduledEnd ? `–${clockOf(t.scheduledEnd)}` : ''}`
+          : t.dueDate
+            ? `⏳ ${fmtWhen(t.dueDate)}`
+            : '';
+        if (when) {
+          row.appendChild(el('span', `wf-task-flow-todotime${t.dueDate && isOverdue(t) ? ' overdue' : ''}`, when));
+        }
+      }
+
+      // hover 操作按钮：⏰ 番茄钟 + ▶ 启动 Session（done 的行不显示；计时中的 ⏹ 常显）
+      if (!isDone) {
+        const acts = el('div', `wf-task-flow-todoacts${isTiming ? ' timing' : ''}`);
+        const pb = el(
+          'button',
+          `wf-task-flow-pomo${isTiming ? ' timing' : ''}`,
+          isTiming ? '⏹' : '⏰',
+        ) as HTMLButtonElement;
+        pb.title = isTiming ? '停止番茄钟' : '开始番茄钟';
+        pb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          pb.disabled = true;
+          const reenable = (): void => {
+            pb.disabled = false;
+          };
+          // 状态经 onPomodoroState 推送回来后 renderContent，这里只管启动/停止
+          if (isTiming) void window.kimi.pomodoroStop(false).catch(reenable);
+          else void window.kimi.pomodoroStart(t.id).catch(reenable);
+        });
+        acts.appendChild(pb);
+
+        // ▶ 启动 Session：与看板卡片一致——已关联则打开，否则 launchTaskSession（子任务会注入父任务上下文）
+        const sb = el('button', 'wf-task-flow-pomo wf-task-flow-sessionbtn', '▶') as HTMLButtonElement;
+        sb.title = t.sessionId ? '打开 Session' : '启动 Session';
+        sb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (t.sessionId) {
+            void ctx.api.openSessionInChat(t.sessionId);
+            return;
+          }
+          sb.disabled = true;
+          launchTaskSession(t).catch(() => {
+            sb.disabled = false;
+          });
+        });
+        acts.appendChild(sb);
+        row.appendChild(acts);
+      }
+      return row;
+    }
+
+    async function renderTodayStats(box: HTMLElement): Promise<void> {
+      const sessions = await pomoSessions();
+      if (!box.isConnected) return;
+      const tk = todayStr();
+      const byTask = new Map<string, { n: number; min: number }>();
+      for (const s of sessions) {
+        if (dateKey(new Date(s.startedAt).toISOString()) !== tk) continue;
+        const agg = byTask.get(s.taskId) ?? { n: 0, min: 0 };
+        agg.n += 1;
+        agg.min += s.minutes;
+        byTask.set(s.taskId, agg);
+      }
+      let totalN = 0;
+      let totalMin = 0;
+      for (const [taskId, agg] of byTask) {
+        const name = state.tasks.find((t) => t.id === taskId)?.title ?? '（已删除任务）';
+        box.appendChild(el('div', '', `${name}：${agg.n} 个番茄 · ${agg.min} 分钟`));
+        totalN += agg.n;
+        totalMin += agg.min;
+      }
+      box.appendChild(el('div', 'total', `总计：${totalN} 个番茄 · ${totalMin} 分钟`));
+    }
+
+    /* ---------- schedule (week grid) ---------- */
+
+    /** 当前周（含 weekOffset 偏移）的周一 00:00 */
+    function weekMonday(): Date {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + state.weekOffset * 7);
+      return d;
+    }
+
+    /** 分钟数对齐 30 分钟，并夹在网格范围内 */
+    function snap30(mins: number): number {
+      const snapped = Math.round(mins / 30) * 30;
+      return Math.min(Math.max(0, snapped), SCHED_HOURS * 60 - 30);
+    }
+
+    /** 拖拽中的任务 id（dragover 里拿不到 dataTransfer 数据，用模块变量传递） */
+    let schedDragId: string | null = null;
+
+    function renderSchedule(container: HTMLElement): void {
+      const wrap = el('div', 'wf-task-flow-sched');
+
+      const monday = weekMonday();
+      const sunday = new Date(monday);
+      sunday.setDate(sunday.getDate() + 6);
+
+      const head = el('div', 'wf-task-flow-calhead');
+      const prev = el('button', 'wf-task-flow-calnav', '‹');
+      const next = el('button', 'wf-task-flow-calnav', '›');
+      const title = el(
+        'span',
+        'wf-task-flow-caltitle',
+        `${monday.getMonth() + 1}/${monday.getDate()} – ${sunday.getMonth() + 1}/${sunday.getDate()}`,
+      );
+      const weekBtn = el('button', 'wf-task-flow-btn', '本周');
+      head.append(prev, title, next, weekBtn);
+      wrap.appendChild(head);
+      prev.addEventListener('click', () => {
+        state.weekOffset -= 1;
+        renderContent();
+      });
+      next.addEventListener('click', () => {
+        state.weekOffset += 1;
+        renderContent();
+      });
+      weekBtn.addEventListener('click', () => {
+        state.weekOffset = 0;
+        renderContent();
+      });
+
+      const bodyRow = el('div', 'wf-task-flow-schedbody');
+
+      // 未排期区：当前项目下未完成且无 scheduledStart 的主任务，可拖入网格
+      const side = el('div', 'wf-task-flow-schedside');
+      side.appendChild(el('div', 'wf-task-flow-schedside-title', '未排期（拖入网格）'));
+      const unsched = filtered()
+        .filter((t) => !t.parentId && !t.scheduledStart && t.status !== 'done' && t.status !== 'canceled')
+        .sort(
+          (a, b) =>
+            PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority) || b.updatedAt - a.updatedAt,
+        );
+      if (unsched.length === 0) side.appendChild(el('div', 'wf-task-flow-todaynone', '都排好了'));
+      for (const t of unsched) {
+        const chip = el('div', 'wf-task-flow-unsched', t.title);
+        chip.draggable = true;
+        chip.title = t.title;
+        chip.style.borderLeftColor = PRIORITY_COLOR[t.priority];
+        chip.addEventListener('dragstart', (e) => {
+          schedDragId = t.id;
+          e.dataTransfer?.setData('text/plain', t.id);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        });
+        chip.addEventListener('dragend', () => {
+          schedDragId = null;
+        });
+        chip.addEventListener('click', () => openDetail(t.id));
+        side.appendChild(chip);
+      }
+      bodyRow.appendChild(side);
+
+      // 周网格：表头（周一~周日）+ 时间刻度列 + 7 个日期列
+      const scroll = el('div', 'wf-task-flow-schedscroll');
+      const grid = el('div', 'wf-task-flow-schedgrid');
+      const tstr = todayStr();
+
+      grid.appendChild(el('div', 'wf-task-flow-schedday', ''));
+      const days: Date[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(d.getDate() + i);
+        days.push(d);
+        const ds = dateKeyOf(d);
+        grid.appendChild(
+          el('div', `wf-task-flow-schedday${ds === tstr ? ' today' : ''}`, `周${WEEKDAYS[i]} ${d.getMonth() + 1}/${d.getDate()}`),
+        );
+      }
+
+      const times = el('div', 'wf-task-flow-schedtimes');
+      times.style.height = `${SCHED_HOURS * SCHED_HOUR_H}px`;
+      for (let h = 0; h <= SCHED_HOURS; h++) {
+        const lab = el('div', 'wf-task-flow-schedtime', `${pad2(SCHED_START_HOUR + h)}:00`);
+        lab.style.top = `${h * SCHED_HOUR_H}px`;
+        times.appendChild(lab);
+      }
+      grid.appendChild(times);
+
+      const scheduled = filtered().filter((t) => !!t.scheduledStart);
+      for (let i = 0; i < 7; i++) {
+        const ds = dateKeyOf(days[i]);
+        const col = el('div', `wf-task-flow-schedcol${ds === tstr ? ' today' : ''}`);
+        col.style.height = `${SCHED_HOURS * SCHED_HOUR_H}px`;
+        for (const t of scheduled) {
+          if (dateKey(t.scheduledStart!) !== ds) continue;
+          col.appendChild(renderSchedBlock(t));
+        }
+        setupSchedDrop(col, days[i]);
+        grid.appendChild(col);
+      }
+
+      scroll.appendChild(grid);
+      bodyRow.appendChild(scroll);
+      wrap.appendChild(bodyRow);
+      container.appendChild(wrap);
+    }
+
+    function renderSchedBlock(t: Task): HTMLElement {
+      const start = new Date(t.scheduledStart!);
+      const end = t.scheduledEnd ? new Date(t.scheduledEnd) : new Date(start.getTime() + 3_600_000);
+      const startMin = (start.getHours() - SCHED_START_HOUR) * 60 + start.getMinutes();
+      const durMin = Math.max(30, Math.round((end.getTime() - start.getTime()) / 60_000));
+
+      const block = el('div', `wf-task-flow-schedblock${t.status === 'done' ? ' done' : ''}`);
+      block.style.top = `${(startMin / 60) * SCHED_HOUR_H}px`;
+      block.style.height = `${(durMin / 60) * SCHED_HOUR_H - 2}px`;
+      block.style.borderLeftColor = PRIORITY_COLOR[t.priority];
+      block.draggable = true;
+      block.title = t.title;
+      block.appendChild(
+        el('div', 't', `${pad2(start.getHours())}:${pad2(start.getMinutes())}–${pad2(end.getHours())}:${pad2(end.getMinutes())}`),
+      );
+      block.appendChild(el('div', '', t.title));
+
+      block.addEventListener('dragstart', (e) => {
+        schedDragId = t.id;
+        e.dataTransfer?.setData('text/plain', t.id);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        block.classList.add('dragging');
+      });
+      block.addEventListener('dragend', () => {
+        schedDragId = null;
+        block.classList.remove('dragging');
+      });
+      block.addEventListener('click', () => openDetail(t.id));
+
+      // 底部 resize 把手：拖动改时长（对齐 30 分钟，最短 30 分钟）
+      const rz = el('div', 'wf-task-flow-schedresize');
+      rz.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // 阻止触发色块拖拽
+        e.stopPropagation();
+        startSchedResize(t, block);
+      });
+      rz.addEventListener('click', (e) => e.stopPropagation());
+      block.appendChild(rz);
+      return block;
+    }
+
+    /** 日期列的 drop target：放下即按 30 分钟对齐排期，幽灵块预览落点 */
+    function setupSchedDrop(col: HTMLElement, day: Date): void {
+      let ghost: HTMLElement | null = null;
+      const clearGhost = (): void => {
+        ghost?.remove();
+        ghost = null;
+        col.classList.remove('dragover');
+      };
+      /** 被拖任务的时长（未排期的默认 1 小时） */
+      const dragDurMin = (): number => {
+        const t = schedDragId ? state.tasks.find((x) => x.id === schedDragId) : undefined;
+        if (!t?.scheduledStart) return 60;
+        const s0 = new Date(t.scheduledStart).getTime();
+        const e0 = t.scheduledEnd ? new Date(t.scheduledEnd).getTime() : s0 + 3_600_000;
+        return Math.max(30, Math.round((e0 - s0) / 60_000));
+      };
+      col.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        col.classList.add('dragover');
+        const y = e.clientY - col.getBoundingClientRect().top;
+        const mins = snap30((y / SCHED_HOUR_H) * 60);
+        if (!ghost) {
+          ghost = el('div', 'wf-task-flow-schedghost');
+          col.appendChild(ghost);
+        }
+        ghost.style.top = `${(mins / 60) * SCHED_HOUR_H}px`;
+        ghost.style.height = `${(dragDurMin() / 60) * SCHED_HOUR_H - 2}px`;
+      });
+      col.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget && col.contains(e.relatedTarget as Node)) return;
+        clearGhost();
+      });
+      col.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const y = e.clientY - col.getBoundingClientRect().top;
+        const mins = snap30((y / SCHED_HOUR_H) * 60);
+        clearGhost();
+        const id = e.dataTransfer?.getData('text/plain');
+        const t = state.tasks.find((x) => x.id === id);
+        if (!t) return;
+        const start = new Date(day);
+        start.setHours(0, 0, 0, 0);
+        start.setMinutes(SCHED_START_HOUR * 60 + mins);
+        t.scheduledStart = start.toISOString();
+        t.scheduledEnd = new Date(start.getTime() + dragDurMin() * 60_000).toISOString();
+        void persist(t);
+      });
+    }
+
+    /** resize 把手拖动：实时预览高度，松手按 30 分钟对齐落盘 */
+    function startSchedResize(t: Task, block: HTMLElement): void {
+      const start = new Date(t.scheduledStart!);
+      const startMin = (start.getHours() - SCHED_START_HOUR) * 60 + start.getMinutes();
+      const col = block.parentElement;
+      if (!col) return;
+      const durAt = (clientY: number): number => {
+        const y = clientY - col.getBoundingClientRect().top;
+        return Math.max(30, snap30((y / SCHED_HOUR_H) * 60) - startMin);
+      };
+      const onMove = (ev: MouseEvent): void => {
+        block.style.height = `${(durAt(ev.clientY) / 60) * SCHED_HOUR_H - 2}px`;
+      };
+      const onUp = (ev: MouseEvent): void => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        t.scheduledEnd = new Date(start.getTime() + durAt(ev.clientY) * 60_000).toISOString();
+        void persist(t);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
     /* ---------- detail panel ---------- */
 
     /** 面板关闭前 flush 未落盘的自动保存（由 openDetail 挂载） */
@@ -988,6 +1694,17 @@ registerWidget({
       dueInput.value = toLocalInput(draft.dueDate);
       pbody.appendChild(fieldRow('截止', dueInput));
 
+      // scheduled time（计划执行；清空则回到未排期）
+      const schStartInput = el('input', 'wf-task-flow-input') as HTMLInputElement;
+      schStartInput.type = 'datetime-local';
+      schStartInput.value = toLocalInput(draft.scheduledStart);
+      pbody.appendChild(fieldRow('计划开始', schStartInput));
+
+      const schEndInput = el('input', 'wf-task-flow-input') as HTMLInputElement;
+      schEndInput.type = 'datetime-local';
+      schEndInput.value = toLocalInput(draft.scheduledEnd);
+      pbody.appendChild(fieldRow('计划结束', schEndInput));
+
       // recurrence
       const recurSel = el('select', 'wf-task-flow-select') as HTMLSelectElement;
       for (const r of RECURRENCE_ORDER) {
@@ -1026,12 +1743,77 @@ registerWidget({
       renderFoot();
       titleInput.focus();
 
+      // 子任务区块：仅已落库的主任务显示（子任务不可再嵌套）
+      if (!isNew && !draft.parentId) {
+        const subSec = el('div', 'wf-task-flow-subsec');
+        pbody.appendChild(subSec);
+        renderSubSec();
+      }
+
+      /** 子任务列表 + 新建输入；增删改后基于最新 state.tasks 重绘 */
+      function renderSubSec(): void {
+        const subSec = pbody.querySelector('.wf-task-flow-subsec');
+        if (!subSec) return;
+        subSec.innerHTML = '';
+        subSec.appendChild(el('div', 'wf-task-flow-subsec-title', '子任务'));
+
+        const subs = state.tasks.filter((x) => x.parentId === draft.id);
+        for (const s of subs) {
+          const row = el('div', 'wf-task-flow-subrow');
+          const cb = el('input') as HTMLInputElement;
+          cb.type = 'checkbox';
+          cb.checked = s.status === 'done';
+          cb.title = '完成';
+          cb.addEventListener('change', () => {
+            s.status = cb.checked ? 'done' : 'todo';
+            s.completedAt = cb.checked ? new Date().toISOString() : undefined;
+            void persist(s).then(renderSubSec);
+          });
+          const name = el('span', `wf-task-flow-subrow-title${s.status === 'done' ? ' done' : ''}`, s.title);
+          name.title = s.title;
+          name.addEventListener('click', () => openDetail(s.id));
+          const del = el('button', 'wf-task-flow-subdel', '✕');
+          del.title = '删除子任务';
+          del.addEventListener('click', () => {
+            void removeTask(s.id).then(renderSubSec);
+          });
+          row.append(cb, name, del);
+          subSec.appendChild(row);
+        }
+
+        const addRow = el('div', 'wf-task-flow-subadd');
+        const inp = el('input', 'wf-task-flow-input') as HTMLInputElement;
+        inp.placeholder = '添加子任务，回车创建';
+        const addBtn = el('button', 'wf-task-flow-btn', '添加');
+        const create = (): void => {
+          const title = inp.value.trim();
+          if (!title) return;
+          inp.value = '';
+          const sub = blankTask('todo');
+          sub.title = title;
+          sub.parentId = draft.id;
+          // 优先级/项目继承父任务（取面板当前值）
+          sub.priority = prioSel.value as TaskPriority;
+          sub.projectId = projFieldSel.value || DEFAULT_PROJECT_ID;
+          void persist(sub).then(renderSubSec);
+        };
+        inp.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') create();
+        });
+        addBtn.addEventListener('click', create);
+        addRow.append(inp, addBtn);
+        subSec.appendChild(addRow);
+      }
+
       // 所有字段改动后 debounce 800ms 自动保存
       titleInput.addEventListener('input', scheduleSave);
       desc.addEventListener('input', scheduleSave);
       tagsInput.addEventListener('input', scheduleSave);
       startInput.addEventListener('change', scheduleSave);
       dueInput.addEventListener('change', scheduleSave);
+      schStartInput.addEventListener('change', scheduleSave);
+      schEndInput.addEventListener('change', scheduleSave);
       statusSel.addEventListener('change', scheduleSave);
       prioSel.addEventListener('change', scheduleSave);
       recurSel.addEventListener('change', scheduleSave);
@@ -1061,6 +1843,8 @@ registerWidget({
         // datetime-local 值是本地时间 YYYY-MM-DDTHH:mm，存 ISO（UTC）
         draft.startDate = startInput.value ? new Date(startInput.value).toISOString() : undefined;
         draft.dueDate = dueInput.value ? new Date(dueInput.value).toISOString() : undefined;
+        draft.scheduledStart = schStartInput.value ? new Date(schStartInput.value).toISOString() : undefined;
+        draft.scheduledEnd = schEndInput.value ? new Date(schEndInput.value).toISOString() : undefined;
         draft.tags = tagsInput.value
           .split(/[,，]/)
           .map((s) => s.trim())
@@ -1192,7 +1976,9 @@ registerWidget({
         return;
       }
       if (state.view === 'board') renderBoard(content);
-      else renderCalendar(content);
+      else if (state.view === 'calendar') renderCalendar(content);
+      else if (state.view === 'today') renderToday(content);
+      else renderSchedule(content);
     }
 
     /* ---------- keyboard: C 新建 ---------- */
@@ -1217,6 +2003,12 @@ registerWidget({
 
     // 其他 widget（如 command-center）可广播刷新
     ctx.bus.on('task:refresh', () => {
+      if (body.isConnected) void reload();
+    });
+
+    // 桌面今日待办面板等其他窗口改动任务后实时刷新（reload 幂等；
+    // 与 pomoTick/onKey 一样用 body.isConnected 兜底，widget 无 unmount 钩子，保持现有模式）
+    window.kimi.onTasksChanged(() => {
       if (body.isConnected) void reload();
     });
 

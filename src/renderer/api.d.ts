@@ -12,7 +12,7 @@ import type {
   TurnDoneEvent,
   VaultEntry,
 } from '../shared/types';
-import type { FocusRecord, Project, Radar, RadarItemsPush, SearchEngine, Task, WorkbenchLayout } from '../shared/workbench-types';
+import type { FocusRecord, PomodoroSession, PomodoroState, Project, Radar, RadarItemsPush, SearchEngine, Task, WorkbenchLayout } from '../shared/workbench-types';
 
 /** deep-focus live status, pushed workbench → main → focus pill */
 export interface FocusStatus {
@@ -155,6 +155,14 @@ export interface KimiApi {
   onLoadSession(cb: (sessionId: string) => void): void;
   reportFocusStatus(status: FocusStatus): void;
   onFocusStatus(cb: (status: FocusStatus) => void): void;
+  pomodoroStart(taskId: string, durationMin?: number): Promise<PomodoroState>;
+  pomodoroStop(completed: boolean): Promise<PomodoroState>;
+  pomodoroState(): Promise<PomodoroState>;
+  pomodoroList(taskId?: string): Promise<PomodoroSession[]>;
+  onPomodoroState(cb: (state: PomodoroState) => void): void;
+  toggleTodoPanel(): void;
+  resizeTodoPanel(width: number, height: number): void;
+  onTasksChanged(cb: () => void): void;
   onRadarItems(cb: (p: RadarItemsPush) => void): void;
   homeAsk(text: string): Promise<string>;
   homeAskImage(text: string, image: PromptImage): Promise<string>;

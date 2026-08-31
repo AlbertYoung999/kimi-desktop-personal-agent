@@ -1,4 +1,4 @@
-import { app, dialog, globalShortcut, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -63,8 +63,12 @@ import {
   showImagePreview,
   toggleChat,
   toggleHome,
+  toggleTodoPanel,
+  resizeTodoPanel,
   toggleWorkbench,
 } from './windows.js';
+import { getPomodoroState, startPomodoro, stopPomodoro } from './pomodoro.js';
+import { listPomodoros } from './workbench.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -248,9 +252,30 @@ function registerIpc(): void {
   ipcMain.on(IPC.toggleWorkbench, () => toggleWorkbench());
   ipcMain.handle(IPC.wbGetLayout, () => getLayout());
   ipcMain.handle(IPC.wbSaveLayout, (_e, layout) => saveLayout(layout));
+  // 任务变更后向所有窗口广播（今日待办 tab / 桌面面板实时同步）
+  const broadcastTasksChanged = (): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IPC.evTasksChanged);
+    }
+  };
   ipcMain.handle(IPC.wbTasksList, () => listTasks());
-  ipcMain.handle(IPC.wbTaskSave, (_e, task) => saveTask(task));
-  ipcMain.handle(IPC.wbTaskDelete, (_e, id: string) => deleteTask(id));
+  ipcMain.handle(IPC.wbTaskSave, (_e, task) => {
+    const r = saveTask(task);
+    broadcastTasksChanged();
+    return r;
+  });
+  ipcMain.handle(IPC.wbTaskDelete, (_e, id: string) => {
+    const r = deleteTask(id);
+    broadcastTasksChanged();
+    return r;
+  });
+  // ---- pomodoro by task + 今日待办桌面面板 (v5.0) ----
+  ipcMain.handle(IPC.wbPomodoroStart, (_e, taskId: string, durationMin?: number) => startPomodoro(taskId, durationMin));
+  ipcMain.handle(IPC.wbPomodoroStop, (_e, completed: boolean) => stopPomodoro(completed));
+  ipcMain.handle(IPC.wbPomodoroState, () => getPomodoroState());
+  ipcMain.handle(IPC.wbPomodoroList, (_e, taskId?: string) => listPomodoros(taskId));
+  ipcMain.on(IPC.toggleTodoPanel, () => toggleTodoPanel());
+  ipcMain.on(IPC.resizeTodoPanel, (_e, w: number, h: number) => resizeTodoPanel(w, h));
   ipcMain.handle(IPC.wbProjectsList, () => listProjects());
   ipcMain.handle(IPC.wbProjectSave, (_e, project) => saveProject(project));
   ipcMain.handle(IPC.wbProjectDelete, (_e, id: string) => deleteProject(id));

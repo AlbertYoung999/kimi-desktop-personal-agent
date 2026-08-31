@@ -69,8 +69,23 @@ function createSchema(d: Database.Database): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      minutes INTEGER DEFAULT 0,
+      completed INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_pomodoro_task ON pomodoro_sessions(task_id, started_at);
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
   `);
+  // 列级迁移：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列
+  const taskCols = (d.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((c) => c.name);
+  for (const col of ['parent_id TEXT', 'scheduled_start TEXT', 'scheduled_end TEXT']) {
+    const name = col.split(' ')[0];
+    if (!taskCols.includes(name)) d.exec(`ALTER TABLE tasks ADD COLUMN ${col}`);
+  }
 }
 
 export function metaGet(key: string): string | null {

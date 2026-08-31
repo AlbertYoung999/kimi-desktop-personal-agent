@@ -43,6 +43,11 @@ export interface AppSettings {
   /** Piper 音色（英文 / 中文，模型 id） */
   ttsPiperVoiceEn?: string;
   ttsPiperVoiceZh?: string;
+  /** TTS 总开关（默认开）；关闭则任何场景都不自动播报 */
+  ttsEnabled?: boolean;
+  /** TTS 分场景开关：zen 模式 / 悬浮窗对话（默认开，受总开关约束） */
+  ttsEnabledZen?: boolean;
+  ttsEnabledChat?: boolean;
   /** 禁用的 MCP 工具名 */
   disabledTools?: string[];
   /** 反应回路触发器开关 */
@@ -195,6 +200,15 @@ export const IPC = {
   // focus pill (dynamic-island style status bar)
   focusStatus: 'focus:status',
   evFocusStatus: 'focus:status-push',
+  // pomodoro by task + 今日待办桌面面板 (v5.0)
+  wbPomodoroStart: 'wb:pomodoro-start',
+  wbPomodoroStop: 'wb:pomodoro-stop',
+  wbPomodoroState: 'wb:pomodoro-state',
+  wbPomodoroList: 'wb:pomodoro-list',
+  evPomodoroState: 'wb:pomodoro-state-push',
+  toggleTodoPanel: 'window:toggle-todo-panel',
+  resizeTodoPanel: 'window:resize-todo-panel',
+  evTasksChanged: 'wb:tasks-changed',
   // radar (P1)
   wbRadarList: 'wb:radar-list',
   wbRadarSave: 'wb:radar-save',

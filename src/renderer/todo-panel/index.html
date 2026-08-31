@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+    * { box-sizing: border-box; }
+
+    #card {
+      position: relative;
+      width: 100%; height: 100%;
+      display: flex; flex-direction: column;
+      background: rgba(10, 13, 18, 0.94);
+      border: 1px solid rgba(0, 240, 255, 0.28);
+      border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 24px rgba(0, 240, 255, 0.08);
+      font-family: "SF Mono", Menlo, monospace;
+      color: #dde3ea;
+      overflow: hidden;
+      animation: cardIn 260ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes cardIn { from { transform: translateY(-10px) scale(0.98); opacity: 0; } }
+
+    /* ---- header (drag region) ---- */
+    #header {
+      -webkit-app-region: drag;
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 12px 10px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      cursor: grab;
+    }
+    #title { font-size: 13px; font-weight: 600; letter-spacing: 1px; color: #e6edf3; }
+    #date { font-size: 10px; color: #7d8590; letter-spacing: 1px; }
+    #header .spacer { flex: 1; }
+
+    #seg {
+      -webkit-app-region: no-drag;
+      display: flex; gap: 2px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px; padding: 2px;
+    }
+    .segBtn {
+      border: none; background: transparent;
+      color: #7d8590; font-size: 10px; letter-spacing: 1px;
+      padding: 2px 8px; border-radius: 6px;
+      cursor: pointer; font-family: inherit;
+    }
+    .segBtn.on { background: rgba(0, 240, 255, 0.15); color: #00f0ff; }
+
+    #closeBtn {
+      -webkit-app-region: no-drag;
+      width: 22px; height: 22px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent; border: none; border-radius: 6px;
+      color: #7d8590; font-size: 13px; cursor: pointer;
+      font-family: inherit;
+    }
+    #closeBtn:hover { background: rgba(255, 80, 80, 0.15); color: #ff6b6b; }
+
+    /* ---- pomodoro status bar ---- */
+    #pomoBar {
+      display: none;
+      align-items: center; gap: 7px;
+      margin: 10px 12px 0;
+      padding: 8px 10px;
+      background: rgba(0, 240, 255, 0.06);
+      border: 1px solid rgba(0, 240, 255, 0.22);
+      border-radius: 10px;
+    }
+    #pomoBar.active { display: flex; }
+    #pomoDot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+      background: #00f0ff; box-shadow: 0 0 8px #00f0ff;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    #pomoTask {
+      flex: 1; min-width: 0;
+      font-size: 11px; color: #aeb8c2;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #pomoTime { font-size: 13px; color: #00f0ff; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+    .pomoBtn {
+      width: 22px; height: 22px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 6px;
+      color: #7d8590; font-size: 11px; cursor: pointer; font-family: inherit;
+    }
+    .pomoBtn:hover { border-color: rgba(0, 240, 255, 0.5); color: #00f0ff; }
+    #pomoDone:hover { border-color: rgba(80, 250, 123, 0.5); color: #50fa7b; }
+
+    /* ---- task list ---- */
+    #list {
+      flex: 1; min-height: 0;
+      overflow-y: auto;
+      padding: 8px 8px 4px;
+    }
+    #list::-webkit-scrollbar, #timeline::-webkit-scrollbar { width: 4px; }
+    #list::-webkit-scrollbar-thumb, #timeline::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.18); border-radius: 2px; }
+
+    .task {
+      position: relative;
+      display: flex; align-items: center; gap: 9px;
+      padding: 7px 8px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      transition: background 120ms;
+    }
+    .task:hover { background: rgba(255, 255, 255, 0.035); }
+    .task.timing {
+      background: rgba(0, 240, 255, 0.07);
+      border-color: rgba(0, 240, 255, 0.25);
+    }
+    /* 子任务行：缩进一级 + 左侧细竖线，行高/字号略小 */
+    .task.sub { padding: 5px 8px 5px 32px; }
+    .task.sub::before {
+      content: '';
+      position: absolute; left: 19px; top: 5px; bottom: 5px;
+      width: 1px; background: rgba(0, 240, 255, 0.18);
+    }
+    .task.sub .taskTitle { font-size: 11px; }
+
+    .check {
+      width: 16px; height: 16px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 5px;
+      color: transparent; font-size: 11px; cursor: pointer; font-family: inherit;
+      transition: all 140ms;
+    }
+    .task.sub .check { width: 14px; height: 14px; font-size: 10px; }
+    .check:hover { border-color: #00f0ff; box-shadow: 0 0 6px rgba(0, 240, 255, 0.3); }
+
+    .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .dot.urgent { background: #ff5555; box-shadow: 0 0 6px rgba(255, 85, 85, 0.7); }
+    .dot.high { background: #ffaa00; box-shadow: 0 0 6px rgba(255, 170, 0, 0.6); }
+    .dot.medium { background: #00f0ff; box-shadow: 0 0 6px rgba(0, 240, 255, 0.6); }
+    .dot.low { background: #6a737d; }
+
+    .taskMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .taskTitle {
+      font-size: 12px; color: #cfd6dd;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: color 200ms, opacity 200ms;
+    }
+    .taskTitle .sub { color: #7d8590; font-size: 10px; }
+    .taskSched { font-size: 9px; color: #5b8a92; letter-spacing: 0.5px; font-variant-numeric: tabular-nums; }
+    .task.done .taskTitle { text-decoration: line-through; color: #6a737d; opacity: 0.55; }
+    .task.done .taskSched { opacity: 0.4; }
+    .task.done .check { border-color: #50fa7b; color: #50fa7b; background: rgba(80, 250, 123, 0.08); }
+    .task.done .dot { box-shadow: none; opacity: 0.5; }
+
+    /* 行 hover 按钮组：⏰ 番茄钟 + ▶ 启动 Session */
+    .rowBtns {
+      display: flex; gap: 2px; flex-shrink: 0;
+      opacity: 0; transition: opacity 120ms;
+    }
+    .task:hover .rowBtns, .task.timing .rowBtns { opacity: 1; }
+    .rowBtn {
+      width: 20px; height: 20px;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent; border: none; border-radius: 6px;
+      color: #5b6470; font-size: 10px; cursor: pointer; font-family: inherit;
+    }
+    .rowBtn:hover { background: rgba(0, 240, 255, 0.12); color: #00f0ff; }
+    .task.timing .rowBtn.pomo { color: #00f0ff; }
+    .rowBtn.session:hover { background: rgba(80, 250, 123, 0.12); color: #50fa7b; }
+    .rowBtn:disabled { opacity: 0.4; cursor: default; }
+
+    #empty {
+      display: none;
+      flex: 1; min-height: 0;
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 6px;
+      color: #5b6470; font-size: 11px; letter-spacing: 0.5px; text-align: center;
+    }
+    #empty .glyph { font-size: 22px; opacity: 0.6; }
+
+    /* ---- schedule timeline ---- */
+    #timeline {
+      display: none;
+      flex: 1; min-height: 0;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+    #tlInner { position: relative; margin: 0 8px; }
+    .tlHour { position: absolute; left: 0; right: 0; border-top: 1px solid rgba(255, 255, 255, 0.05); }
+    .tlHourLabel {
+      position: absolute; left: 0; top: -5px;
+      font-size: 8px; color: #5b6470; letter-spacing: 0.5px;
+      font-variant-numeric: tabular-nums;
+    }
+    .tlBlock {
+      position: absolute; left: 46px; right: 4px;
+      border-radius: 6px; border-left: 2px solid;
+      padding: 2px 6px;
+      font-size: 10px; color: #cfd6dd;
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      cursor: default;
+    }
+    .tlBlock .tlTime { color: rgba(255, 255, 255, 0.55); font-size: 9px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+    .tlBlock.urgent { border-color: #ff5555; background: rgba(255, 85, 85, 0.13); }
+    .tlBlock.high { border-color: #ffaa00; background: rgba(255, 170, 0, 0.12); }
+    .tlBlock.medium { border-color: #00f0ff; background: rgba(0, 240, 255, 0.1); }
+    .tlBlock.low { border-color: #6a737d; background: rgba(106, 115, 125, 0.15); }
+    .tlBlock.done { opacity: 0.4; }
+    .tlBlock.done .tlTitle { text-decoration: line-through; }
+    #nowLine {
+      position: absolute; left: 0; right: 0; height: 1px;
+      background: #ff5555; box-shadow: 0 0 6px rgba(255, 85, 85, 0.7);
+      pointer-events: none; z-index: 2;
+    }
+    #nowLine::before {
+      content: ''; position: absolute; left: 40px; top: -2.5px;
+      width: 5px; height: 5px; border-radius: 50%; background: #ff5555;
+    }
+
+    /* ---- footer stats ---- */
+    #stats {
+      padding: 9px 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 10px; color: #7d8590; letter-spacing: 0.5px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    #stats .accent { color: #00f0ff; }
+
+    /* ---- resize grip (右下角缩放手柄) ---- */
+    #grip {
+      position: absolute; right: 3px; bottom: 3px;
+      width: 16px; height: 16px;
+      cursor: nwse-resize; z-index: 10;
+      background: repeating-linear-gradient(
+        -45deg,
+        transparent 0 3px,
+        rgba(0, 240, 255, 0.35) 3px 4px,
+        transparent 4px 7px
+      );
+      border-radius: 0 0 12px 0;
+      opacity: 0.6;
+    }
+    #grip:hover { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="card">
+    <div id="header">
+      <span id="title">今日待办</span>
+      <span id="date"></span>
+      <span class="spacer"></span>
+      <div id="seg">
+        <button class="segBtn" id="segList">列表</button>
+        <button class="segBtn" id="segSched">日程</button>
+      </div>
+      <button id="closeBtn" title="关闭">✕</button>
+    </div>
+    <div id="pomoBar">
+      <div id="pomoDot"></div>
+      <span id="pomoTask"></span>
+      <span id="pomoTime">--:--</span>
+      <button class="pomoBtn" id="pomoStop" title="提前停止">⏹</button>
+      <button class="pomoBtn" id="pomoDone" title="完成本次专注">✓</button>
+    </div>
+    <div id="list"></div>
+    <div id="empty">
+      <span class="glyph">◌</span>
+      <span>今日无待办 · 去 Task Flow 安排今天吧</span>
+    </div>
+    <div id="timeline"></div>
+    <div id="stats"></div>
+    <div id="grip" title="拖拽调整大小"></div>
+  </div>
+  <script src="index.js"></script>
+</body>
+</html>

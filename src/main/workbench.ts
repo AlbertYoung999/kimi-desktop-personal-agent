@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getDb } from './db.js';
-import type { FocusRecord, Project, SearchEngine, Task, WorkbenchLayout } from '../shared/workbench-types.js';
+import type { FocusRecord, PomodoroSession, Project, SearchEngine, Task, WorkbenchLayout } from '../shared/workbench-types.js';
 import { DEFAULT_PROJECT_ID } from '../shared/workbench-types.js';
 
 /** user layer root — the ONLY writable directory for workbench data (PRD §2.3) */
@@ -47,7 +47,9 @@ interface TaskRow {
   id: string; title: string; description: string; status: string; priority: string;
   start_date: string | null; due_date: string | null; completed_at: string | null;
   notes: string; tags: string; project_id: string | null; recurrence: string;
-  session_id: string | null; created_at: number; updated_at: number;
+  session_id: string | null; parent_id: string | null;
+  scheduled_start: string | null; scheduled_end: string | null;
+  created_at: number; updated_at: number;
 }
 
 function rowToTask(r: TaskRow): Task {
@@ -58,6 +60,8 @@ function rowToTask(r: TaskRow): Task {
     completedAt: r.completed_at ?? undefined, notes: r.notes,
     tags: JSON.parse(r.tags || '[]') as string[], projectId: r.project_id ?? undefined,
     recurrence: r.recurrence as Task['recurrence'], sessionId: r.session_id ?? undefined,
+    parentId: r.parent_id ?? undefined,
+    scheduledStart: r.scheduled_start ?? undefined, scheduledEnd: r.scheduled_end ?? undefined,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -83,12 +87,13 @@ export function saveTask(task: Task): Task[] {
   const d = getDb();
   const prev = d.prepare('SELECT status FROM tasks WHERE id = ?').get(task.id) as { status: string } | undefined;
   task.updatedAt = Date.now();
-  d.prepare(`INSERT OR REPLACE INTO tasks (id,title,description,status,priority,start_date,due_date,completed_at,notes,tags,project_id,recurrence,session_id,created_at,updated_at)
-    VALUES (@id,@title,@description,@status,@priority,@startDate,@dueDate,@completedAt,@notes,@tags,@projectId,@recurrence,@sessionId,@createdAt,@updatedAt)`).run({
+  d.prepare(`INSERT OR REPLACE INTO tasks (id,title,description,status,priority,start_date,due_date,completed_at,notes,tags,project_id,recurrence,session_id,parent_id,scheduled_start,scheduled_end,created_at,updated_at)
+    VALUES (@id,@title,@description,@status,@priority,@startDate,@dueDate,@completedAt,@notes,@tags,@projectId,@recurrence,@sessionId,@parentId,@scheduledStart,@scheduledEnd,@createdAt,@updatedAt)`).run({
     id: task.id, title: task.title, description: task.description, status: task.status, priority: task.priority,
     startDate: task.startDate ?? null, dueDate: task.dueDate ?? null, completedAt: task.completedAt ?? null,
     notes: task.notes, tags: JSON.stringify(task.tags ?? []), projectId: task.projectId ?? null,
     recurrence: task.recurrence ?? 'none', sessionId: task.sessionId ?? null,
+    parentId: task.parentId ?? null, scheduledStart: task.scheduledStart ?? null, scheduledEnd: task.scheduledEnd ?? null,
     createdAt: task.createdAt, updatedAt: task.updatedAt,
   });
 
@@ -105,6 +110,8 @@ export function saveTask(task: Task): Task[] {
       dueDate: nextOccurrence(base, recurrence).toISOString(),
       completedAt: undefined,
       sessionId: undefined,
+      scheduledStart: undefined,
+      scheduledEnd: undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -114,8 +121,40 @@ export function saveTask(task: Task): Task[] {
 }
 
 export function deleteTask(id: string): Task[] {
-  getDb().prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  const d = getDb();
+  // 主任务删除时，其子任务一并删除（只支持一层，不存在级联）
+  d.prepare('DELETE FROM tasks WHERE id = ? OR parent_id = ?').run(id, id);
   return listTasks();
+}
+
+// ---------- pomodoro sessions (SQLite, v5.0) ----------
+
+interface PomodoroRow {
+  id: number; task_id: string; started_at: number; ended_at: number | null;
+  minutes: number; completed: number;
+}
+
+function rowToPomodoro(r: PomodoroRow): PomodoroSession {
+  return {
+    id: r.id, taskId: r.task_id, startedAt: r.started_at,
+    endedAt: r.ended_at ?? undefined, minutes: r.minutes, completed: r.completed === 1,
+  };
+}
+
+export function addPomodoro(rec: Omit<PomodoroSession, 'id'>): void {
+  getDb()
+    .prepare('INSERT INTO pomodoro_sessions (task_id,started_at,ended_at,minutes,completed) VALUES (?,?,?,?,?)')
+    .run(rec.taskId, rec.startedAt, rec.endedAt ?? null, rec.minutes, rec.completed ? 1 : 0);
+}
+
+export function listPomodoros(taskId?: string): PomodoroSession[] {
+  const d = getDb();
+  const rows = (
+    taskId
+      ? d.prepare('SELECT * FROM pomodoro_sessions WHERE task_id = ? ORDER BY started_at DESC').all(taskId)
+      : d.prepare('SELECT * FROM pomodoro_sessions ORDER BY started_at DESC').all()
+  ) as PomodoroRow[];
+  return rows.map(rowToPomodoro);
 }
 
 // ---------- projects (SQLite) ----------
