@@ -162,6 +162,8 @@ export interface KimiApi {
   onPomodoroState(cb: (state: PomodoroState) => void): void;
   toggleTodoPanel(): void;
   resizeTodoPanel(width: number, height: number): void;
+  /** 灵动岛收展：true 收成 pill，false 展开为面板 */
+  todoPanelSetMode(collapsed: boolean): void;
   onTasksChanged(cb: () => void): void;
   onRadarItems(cb: (p: RadarItemsPush) => void): void;
   homeAsk(text: string): Promise<string>;

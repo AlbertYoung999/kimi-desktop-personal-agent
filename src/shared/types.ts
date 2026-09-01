@@ -208,6 +208,7 @@ export const IPC = {
   evPomodoroState: 'wb:pomodoro-state-push',
   toggleTodoPanel: 'window:toggle-todo-panel',
   resizeTodoPanel: 'window:resize-todo-panel',
+  todoPanelMode: 'window:todo-panel-mode',
   evTasksChanged: 'wb:tasks-changed',
   // radar (P1)
   wbRadarList: 'wb:radar-list',

@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('kimi', {
   onPomodoroState: on<unknown>(IPC.evPomodoroState),
   toggleTodoPanel: (): void => void ipcRenderer.send(IPC.toggleTodoPanel),
   resizeTodoPanel: (w: number, h: number): void => void ipcRenderer.send(IPC.resizeTodoPanel, w, h),
+  todoPanelSetMode: (collapsed: boolean): void => void ipcRenderer.send(IPC.todoPanelMode, collapsed),
   onTasksChanged: on<void>(IPC.evTasksChanged),
   homeAsk: (text: string): Promise<string> => ipcRenderer.invoke(IPC.homeAsk, text),
   homeAskImage: (text: string, image: unknown): Promise<string> => ipcRenderer.invoke(IPC.homeAskImage, text, image),

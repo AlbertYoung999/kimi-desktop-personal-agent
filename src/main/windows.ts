@@ -306,10 +306,14 @@ export function movePillTo(x: number, y: number): void {
 // ---------- todo panel (今日待办桌面小面板, v5.0) ----------
 
 let todoWin: BrowserWindow | null = null;
-/** 用户调整过的尺寸（本次运行内记住，重开面板沿用） */
+/** 展开态尺寸：用户调整过的（本次运行内记住，重开面板沿用） */
 let todoSize = { width: 320, height: 440 };
 const TODO_MIN_W = 280;
 const TODO_MIN_H = 320;
+/** 收起态（灵动岛 pill）尺寸 */
+const TODO_PILL_W = 240;
+const TODO_PILL_H = 48;
+let todoCollapsed = true;
 
 export function getTodoPanelWindow(): BrowserWindow | null {
   return todoWin;
@@ -319,14 +323,15 @@ export function ensureTodoPanel(): BrowserWindow {
   if (todoWin && !todoWin.isDestroyed()) return todoWin;
   const display = screen.getPrimaryDisplay();
   const { x, y, width } = display.workArea;
+  todoCollapsed = true; // 打开默认收起为灵动岛，悬浮/点击展开
   todoWin = new BrowserWindow({
-    width: todoSize.width,
-    height: todoSize.height,
-    x: x + width - todoSize.width - 24,
+    width: TODO_PILL_W,
+    height: TODO_PILL_H,
+    x: x + width - TODO_PILL_W - 24,
     y: y + 60,
     frame: false,
     transparent: true,
-    resizable: false, // frameless 无原生缩放边，缩放走 resizeTodoPanel（右下角手柄）
+    resizable: false, // frameless 无原生缩放边：展开态缩放手柄走 resizeTodoPanel，收展走 setTodoPanelMode
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
@@ -353,6 +358,17 @@ export function resizeTodoPanel(width: number, height: number): void {
     height: Math.max(TODO_MIN_H, Math.round(height)),
   };
   todoWin.setSize(todoSize.width, todoSize.height);
+}
+
+/** 灵动岛收展：collapsed=true 收成 pill；false 展开为用户尺寸。锚定右边缘，不漂移。 */
+export function setTodoPanelMode(collapsed: boolean): void {
+  if (!todoWin || todoWin.isDestroyed() || collapsed === todoCollapsed) return;
+  todoCollapsed = collapsed;
+  const [curW] = todoWin.getSize();
+  const [curX, curY] = todoWin.getPosition();
+  const w = collapsed ? TODO_PILL_W : todoSize.width;
+  const h = collapsed ? TODO_PILL_H : todoSize.height;
+  todoWin.setBounds({ x: curX + curW - w, y: curY, width: w, height: h });
 }
 
 export function toggleTodoPanel(): void {

@@ -65,6 +65,7 @@ import {
   toggleHome,
   toggleTodoPanel,
   resizeTodoPanel,
+  setTodoPanelMode,
   toggleWorkbench,
 } from './windows.js';
 import { getPomodoroState, startPomodoro, stopPomodoro } from './pomodoro.js';
@@ -276,6 +277,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.wbPomodoroList, (_e, taskId?: string) => listPomodoros(taskId));
   ipcMain.on(IPC.toggleTodoPanel, () => toggleTodoPanel());
   ipcMain.on(IPC.resizeTodoPanel, (_e, w: number, h: number) => resizeTodoPanel(w, h));
+  ipcMain.on(IPC.todoPanelMode, (_e, collapsed: boolean) => setTodoPanelMode(collapsed));
   ipcMain.handle(IPC.wbProjectsList, () => listProjects());
   ipcMain.handle(IPC.wbProjectSave, (_e, project) => saveProject(project));
   ipcMain.handle(IPC.wbProjectDelete, (_e, id: string) => deleteProject(id));

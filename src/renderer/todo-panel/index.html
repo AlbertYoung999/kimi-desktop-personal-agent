@@ -6,6 +6,48 @@
     html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
     * { box-sizing: border-box; }
 
+    /* ---- 收起态：灵动岛 pill（240×48 胶囊，样式对齐 focus-pill） ---- */
+    #pill {
+      width: 100%; height: 100%;
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 14px;
+      background: rgba(13, 17, 23, 0.92);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      border-radius: 999px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 16px rgba(0, 240, 255, 0.12);
+      -webkit-app-region: drag;
+      cursor: grab;
+      font-family: "SF Mono", Menlo, monospace;
+      color: #dde3ea;
+      animation: pillIn 250ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes pillIn { from { transform: translateY(-6px); opacity: 0; } }
+    #pillDot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+      background: #00f0ff; box-shadow: 0 0 8px #00f0ff;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    #pillTask {
+      flex: 1; min-width: 0;
+      font-size: 11px; color: #aeb8c2;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #pillTime { font-size: 13px; color: #00f0ff; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+    #pillSummary { display: none; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+    #pillCount { font-size: 11px; color: #dde3ea; letter-spacing: 1px; }
+    #pillBar {
+      height: 3px; border-radius: 2px; overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    #pillBarFill {
+      height: 100%; width: 0;
+      background: #00f0ff; border-radius: 2px;
+      box-shadow: 0 0 6px rgba(0, 240, 255, 0.6);
+      transition: width 200ms;
+    }
+
+    /* ---- 展开态：完整面板 ---- */
     #card {
       position: relative;
       width: 100%; height: 100%;
@@ -48,7 +90,7 @@
     }
     .segBtn.on { background: rgba(0, 240, 255, 0.15); color: #00f0ff; }
 
-    #closeBtn {
+    .headBtn {
       -webkit-app-region: no-drag;
       width: 22px; height: 22px; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
@@ -56,6 +98,7 @@
       color: #7d8590; font-size: 13px; cursor: pointer;
       font-family: inherit;
     }
+    #collapseBtn:hover { background: rgba(0, 240, 255, 0.12); color: #00f0ff; }
     #closeBtn:hover { background: rgba(255, 80, 80, 0.15); color: #ff6b6b; }
 
     /* ---- pomodoro status bar ---- */
@@ -74,7 +117,6 @@
       background: #00f0ff; box-shadow: 0 0 8px #00f0ff;
       animation: pulse 1.6s ease-in-out infinite;
     }
-    @keyframes pulse { 50% { opacity: 0.35; } }
     #pomoTask {
       flex: 1; min-width: 0;
       font-size: 11px; color: #aeb8c2;
@@ -235,6 +277,36 @@
       width: 5px; height: 5px; border-radius: 50%; background: #ff5555;
     }
 
+    /* ---- 快速创建输入区 ---- */
+    #quickAdd {
+      display: flex; gap: 6px;
+      padding: 8px 12px 6px;
+    }
+    #quickInput {
+      flex: 1; min-width: 0;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 6px 9px;
+      color: #dde3ea; font-family: inherit; font-size: 11px;
+      outline: none;
+      transition: border-color 140ms, box-shadow 140ms;
+    }
+    #quickInput:focus {
+      border-color: rgba(0, 240, 255, 0.5);
+      box-shadow: 0 0 8px rgba(0, 240, 255, 0.15);
+    }
+    #quickInput::placeholder { color: #5b6470; }
+    #quickAddBtn {
+      flex-shrink: 0;
+      padding: 0 12px;
+      background: rgba(0, 240, 255, 0.08);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 8px;
+      color: #00f0ff; font-size: 13px; cursor: pointer; font-family: inherit;
+    }
+    #quickAddBtn:hover { background: rgba(0, 240, 255, 0.16); }
+
     /* ---- footer stats ---- */
     #stats {
       padding: 9px 14px;
@@ -262,7 +334,19 @@
   </style>
 </head>
 <body>
-  <div id="card">
+  <!-- 收起态：灵动岛 pill -->
+  <div id="pill" title="今日待办 · 悬停/双击展开">
+    <div id="pillDot"></div>
+    <span id="pillTask"></span>
+    <span id="pillTime"></span>
+    <div id="pillSummary">
+      <span id="pillCount">今日 0/0</span>
+      <div id="pillBar"><div id="pillBarFill"></div></div>
+    </div>
+  </div>
+
+  <!-- 展开态：完整面板（初始隐藏，窗口创建即 pill 尺寸） -->
+  <div id="card" style="display: none;">
     <div id="header">
       <span id="title">今日待办</span>
       <span id="date"></span>
@@ -271,7 +355,8 @@
         <button class="segBtn" id="segList">列表</button>
         <button class="segBtn" id="segSched">日程</button>
       </div>
-      <button id="closeBtn" title="关闭">✕</button>
+      <button class="headBtn" id="collapseBtn" title="收起">—</button>
+      <button class="headBtn" id="closeBtn" title="关闭">✕</button>
     </div>
     <div id="pomoBar">
       <div id="pomoDot"></div>
@@ -286,6 +371,10 @@
       <span>今日无待办 · 去 Task Flow 安排今天吧</span>
     </div>
     <div id="timeline"></div>
+    <div id="quickAdd">
+      <input id="quickInput" type="text" placeholder="添加今天的任务，回车创建" maxlength="120" />
+      <button id="quickAddBtn" title="添加">＋</button>
+    </div>
     <div id="stats"></div>
     <div id="grip" title="拖拽调整大小"></div>
   </div>

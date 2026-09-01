@@ -2,13 +2,13 @@ import { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { PomodoroState } from '../shared/workbench-types.js';
 import { addPomodoro, listTasks } from './workbench.js';
-import { pushFocusStatus } from './windows.js';
+import { getTodoPanelWindow, pushFocusStatus } from './windows.js';
 
 /**
  * 番茄钟引擎（v5.0）：main 进程持有进行中的番茄钟状态，
  * 任何窗口（今日待办 tab / 桌面面板）都可以 start/stop，状态向所有窗口广播。
  * 结束（跑完或提前停止）时写入 pomodoro_sessions 表用于统计复盘。
- * 同时复用桌面灵动岛（focus-pill）外显倒计时，与 deep-focus 同一通道。
+ * 倒计时外显：今日待办灵动岛开着时由它展示；否则回落到 focus-pill 灵动岛。
  */
 
 const DEFAULT_DURATION_MIN = 25;
@@ -28,6 +28,15 @@ function broadcast(): void {
   }
 }
 
+/** 今日待办灵动岛开着时倒计时由它展示，不再弹 focus-pill，避免双 pill */
+function pushPillStatus(status: { active: boolean } & Record<string, unknown>): void {
+  if (getTodoPanelWindow()) {
+    if (!status.active) pushFocusStatus(status); // 关掉可能残留的 focus-pill
+    return;
+  }
+  pushFocusStatus(status);
+}
+
 function finish(completed: boolean): void {
   if (!current) return;
   if (timer) {
@@ -44,7 +53,7 @@ function finish(completed: boolean): void {
   });
   current = null;
   broadcast();
-  pushFocusStatus({ active: false, mode: 'pomo', task: '', remainingMs: 0, paused: false });
+  pushPillStatus({ active: false, mode: 'pomo', task: '', remainingMs: 0, paused: false });
 }
 
 export function startPomodoro(taskId: string, durationMin = DEFAULT_DURATION_MIN): PomodoroState {
@@ -55,7 +64,7 @@ export function startPomodoro(taskId: string, durationMin = DEFAULT_DURATION_MIN
   current = { taskId, taskTitle: task.title, startedAt: Date.now(), durationMin };
   timer = setTimeout(() => finish(true), durationMin * 60_000);
   broadcast();
-  pushFocusStatus({
+  pushPillStatus({
     active: true,
     mode: 'pomo',
     task: task.title,

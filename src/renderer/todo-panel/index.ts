@@ -1,5 +1,7 @@
-// 今日待办 —— 桌面悬浮小面板（todo-panel window）
-// 数据走 window.kimi.wb.listTasks / saveTask，番茄钟走 window.kimi.pomodoro*。
+// 今日待办 —— 灵动岛形态桌面悬浮面板（todo-panel window）
+// 收起 = 240×48 pill；悬浮或双击展开为完整面板，点标题栏「—」手动收回。
+// 窗口尺寸由 main 切（todoPanelSetMode），渲染层只切 DOM：#pill / #card 互斥显示。
+// 数据走 window.kimi.wb.listTasks / saveTask。
 
 import type { PomodoroState, Task, TaskPriority } from '../../shared/workbench-types';
 
@@ -17,6 +19,9 @@ let tasks: Task[] = [];
 let pomo: PomodoroState = { active: false };
 let view: PanelView = localStorage.getItem('todoPanelView') === 'schedule' ? 'schedule' : 'list';
 let overdueOpen = localStorage.getItem('todoPanelOverdueOpen') === '1';
+
+// 窗口初始创建即 pill 尺寸（收起态）
+let collapsed = true;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -106,6 +111,54 @@ function overdueTasks(excludeIds: Set<string>): Task[] {
       return isBeforeToday(t.dueDate) || isBeforeToday(t.scheduledStart);
     })
     .sort(byPriorityThenUpdated);
+}
+
+// ---- 灵动岛收展（悬浮/双击展开，「—」手动收起） ----
+
+function setCollapsed(c: boolean): void {
+  if (collapsed === c) return;
+  collapsed = c;
+  // 先切 DOM 再调 setMode（同一 tick），避免窗口变大但 DOM 未画的透明闪烁
+  $('pill').style.display = c ? 'flex' : 'none';
+  $('card').style.display = c ? 'none' : 'flex';
+  window.kimi.todoPanelSetMode(c);
+}
+
+// 悬浮展开：鼠标进入窗口即展开
+document.addEventListener('mouseenter', () => {
+  if (collapsed) setCollapsed(false);
+});
+
+// 双击展开：pill 整条是 app-region: drag，多数平台 click/dblclick 仍会派发；
+// 即便被 drag 区吞掉也不影响——悬浮展开已先行触发
+$('pill').addEventListener('dblclick', () => {
+  if (collapsed) setCollapsed(false);
+});
+
+// ---- 收起态 pill 内容 ----
+
+function renderPill(): void {
+  const pomoEls = [$('pillDot'), $('pillTask'), $('pillTime')];
+  const summary = $('pillSummary');
+  if (pomo.active) {
+    summary.style.display = 'none';
+    for (const el of pomoEls) el.style.display = '';
+    $('pillTask').textContent = pomo.taskTitle ?? '';
+    $('pillTime').textContent = fmtCountdown();
+    return;
+  }
+  for (const el of pomoEls) el.style.display = 'none';
+  summary.style.display = 'flex';
+  const { active, done } = visibleTasks();
+  const total = active.length + done.length;
+  if (total === 0) {
+    $('pillCount').textContent = '今日无待办';
+    $('pillBar').style.display = 'none';
+  } else {
+    $('pillCount').textContent = `今日 ${done.length}/${total}`;
+    $('pillBar').style.display = '';
+    $('pillBarFill').style.width = `${Math.round((done.length / total) * 100)}%`;
+  }
 }
 
 function renderHeader(): void {
@@ -449,7 +502,9 @@ async function renderStats(): Promise<void> {
     `番茄 <span class="accent">${pomoCount}</span> 个 / <span class="accent">${pomoMinutes}</span> 分钟`;
 }
 
+// pill 与面板内容都刷新（面板 DOM 收起时重绘也无妨，展开即最新）
 function render(): void {
+  renderPill();
   renderHeader();
   renderPomoBar();
   const inList = view === 'list';
@@ -480,12 +535,42 @@ async function reload(): Promise<void> {
 }
 
 $('closeBtn').addEventListener('click', () => window.close());
+$('collapseBtn').addEventListener('click', () => setCollapsed(true));
 $('pomoStop').addEventListener('click', () => void window.kimi.pomodoroStop(false));
 $('pomoDone').addEventListener('click', () => void window.kimi.pomodoroStop(true));
 $('segList').addEventListener('click', () => setView('list'));
 $('segSched').addEventListener('click', () => setView('schedule'));
 
-// 右下角缩放手柄：frameless 窗口无原生缩放边，走 resizeTodoPanel
+// ---- 底部快速创建 ----
+{
+  const input = $('quickInput') as HTMLInputElement;
+  const submit = async (): Promise<void> => {
+    const title = input.value.trim();
+    if (!title) return;
+    const now = Date.now();
+    const task: Task = {
+      id: `task-${now.toString(36)}`,
+      title,
+      description: '',
+      status: 'todo',
+      priority: 'medium',
+      startDate: new Date().toISOString(), // 今日过滤命中
+      notes: '',
+      tags: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    input.value = '';
+    tasks = await window.kimi.wb.saveTask(task);
+    render(); // main 也会广播 evTasksChanged 触发 reload，双保险
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') void submit();
+  });
+  $('quickAddBtn').addEventListener('click', () => void submit());
+}
+
+// 右下角缩放手柄：frameless 窗口无原生缩放边，走 resizeTodoPanel（仅展开态可见）
 {
   const grip = $('grip');
   let rs: { sx: number; sy: number; w: number; h: number } | null = null;
@@ -510,9 +595,13 @@ window.kimi.onPomodoroState((state) => {
   render();
 });
 
-// 每秒推进番茄倒计时与日程「现在」横线（本地 tick）
+// 每秒推进番茄倒计时（pill + 面板）与日程「现在」横线（本地 tick）
 setInterval(() => {
-  if (pomo.active) $('pomoTime').textContent = fmtCountdown();
+  if (pomo.active) {
+    const t = fmtCountdown();
+    $('pomoTime').textContent = t;
+    if (collapsed) $('pillTime').textContent = t;
+  }
   const nowLine = document.getElementById('nowLine');
   if (nowLine) nowLine.style.top = `${nowTop()}px`;
 }, 1000);
