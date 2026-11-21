@@ -21,6 +21,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { id: 'home', label: '主页', icon: '⌂', page: 'page-home' },
+  { id: 'channel', label: 'CHANNEL', icon: '#', page: 'page-channel' },
   { id: 'dashboard', label: 'DASHBOARD', icon: '▦', page: 'page-dashboard' },
   { id: 'zen', label: 'ZEN', icon: '◉', page: 'page-zen' },
   { id: 'plugins', label: 'PLUGINS', icon: '⬡', page: 'page-plugins' },

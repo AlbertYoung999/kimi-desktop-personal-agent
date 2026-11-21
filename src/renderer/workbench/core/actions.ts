@@ -6,7 +6,7 @@ import { dismissZenFloat, mountZenFloat, mountZenWidget } from '../pages/zen';
 import { mountArtifact } from '../widgets/artifact';
 
 /**
- * Executes tool calls forwarded from the workbench MCP server (design-evolve.md E1).
+ * Executes tool calls forwarded from the workbench MCP server (design/design-evolve.md E1).
  * Data-mutating tools (task_create / radar_create / search_launch) run in the main
  * process; this module handles the ones that need live renderer state.
  */

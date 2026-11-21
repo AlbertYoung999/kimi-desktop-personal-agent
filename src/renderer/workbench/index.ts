@@ -22,6 +22,7 @@ import { initHomePage } from './pages/home';
 import { initZenPage } from './pages/zen';
 import { initPluginsPage } from './pages/plugins';
 import { initAgentsPage } from './pages/agents';
+import { initChannelPage } from './pages/channel';
 
 // clock
 const clock = document.getElementById('clock')!;
@@ -52,6 +53,7 @@ initHomePage();
 initZenPage();
 initPluginsPage();
 initAgentsPage();
+initChannelPage();
 initVoice();
 initMainLog();
 

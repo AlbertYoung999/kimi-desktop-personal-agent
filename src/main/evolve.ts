@@ -5,7 +5,7 @@ import { recordSignal } from './signals.js';
 import { wbRoot } from './workbench.js';
 
 /**
- * Evolution journal (design-evolve.md §E2): every MCP tool execution is logged
+ * Evolution journal (design/design-evolve.md §E2): every MCP tool execution is logged
  * append-only; undoable tools snapshot their domain file(s) before mutation.
  */
 

@@ -1,18 +1,30 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/types.js';
 import type {
+  AgentRecord,
   AppSettings,
   BallState,
+  ChannelProjectRecord,
+  ChannelTree,
   ChunkEvent,
   CursorPoint,
+  GroupConfigPatch,
+  GroupEvent,
+  GroupMessage,
+  GroupPlanResult,
+  GroupRecord,
   LoadSessionResult,
+  OpenSessionResult,
   PermissionRequest,
   PresetMode,
   PromptImage,
+  SessionConfig,
+  SessionConfigField,
   SessionMeta,
   ToolCallEvent,
   TurnDoneEvent,
   VaultEntry,
+  WorktreeOpResult,
 } from '../shared/types.js';
 
 const on = <T>(channel: string) => (cb: (payload: T) => void) => {
@@ -25,13 +37,13 @@ contextBridge.exposeInMainWorld('kimi', {
   pickWorkspaceDir: (): Promise<string | null> => ipcRenderer.invoke(IPC.pickWorkspaceDir),
 
   listSessions: (): Promise<SessionMeta[]> => ipcRenderer.invoke(IPC.listSessions),
-  newSession: (): Promise<SessionMeta> => ipcRenderer.invoke(IPC.newSession),
+  newSession: (cwd?: string): Promise<SessionMeta> => ipcRenderer.invoke(IPC.newSession, cwd),
   loadSession: (sessionId: string): Promise<LoadSessionResult> => ipcRenderer.invoke(IPC.loadSession, sessionId),
-  prompt: (sessionId: string, text: string, modeId: string | null, image: PromptImage | null): Promise<void> =>
-    ipcRenderer.invoke(IPC.prompt, sessionId, text, modeId, image),
+  prompt: (sessionId: string, text: string, modeId: string | null, images: PromptImage[] | null): Promise<void> =>
+    ipcRenderer.invoke(IPC.prompt, sessionId, text, modeId, images),
   cancel: (sessionId: string): Promise<void> => ipcRenderer.invoke(IPC.cancel, sessionId),
-  respondPermission: (requestId: string, approved: boolean, remember: boolean, sessionId: string): void => {
-    ipcRenderer.send(IPC.permissionResponse, { requestId, approved, remember, sessionId });
+  respondPermission: (requestId: string, approved: boolean, remember: boolean, sessionId: string, optionId?: string): void => {
+    ipcRenderer.send(IPC.permissionResponse, { requestId, approved, remember, sessionId, optionId });
   },
 
   listModes: (): Promise<PresetMode[]> => ipcRenderer.invoke(IPC.listModes),
@@ -102,6 +114,9 @@ contextBridge.exposeInMainWorld('kimi', {
   onArtifactProgress: on<unknown>(IPC.evArtifactProgress),
   onWbNotify: on<unknown>(IPC.evWbNotify),
   onMainSession: on<unknown>(IPC.evMainSession),
+  onSessionMode: on<{ sessionId: string; modeId: string }>(IPC.evSessionMode),
+  onSessionModel: on<{ sessionId: string; model: string }>(IPC.evSessionModel),
+  onSessionThinking: on<{ sessionId: string; thinking: string }>(IPC.evSessionThinking),
   setThinking: (on: boolean): Promise<void> => ipcRenderer.invoke(IPC.setThinking, on),
   wbEvolveLog: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.wbEvolveLog),
   wb: {
@@ -130,6 +145,7 @@ contextBridge.exposeInMainWorld('kimi', {
     runBackup: () => ipcRenderer.invoke(IPC.wbRunBackup),
     acpAsk: (text: string): Promise<string> => ipcRenderer.invoke(IPC.wbAcpAsk, text),
     forgeGenerate: (prompt: string): Promise<string> => ipcRenderer.invoke(IPC.wbForgeGenerate, prompt),
+    planGenerate: (prompt: string): Promise<string> => ipcRenderer.invoke(IPC.wbPlanGenerate, prompt),
     libraryList: () => ipcRenderer.invoke(IPC.wbLibraryList),
     libraryAdd: (item: unknown) => ipcRenderer.invoke(IPC.wbLibraryAdd, item),
     libraryDelete: (id: string) => ipcRenderer.invoke(IPC.wbLibraryDelete, id),
@@ -140,6 +156,102 @@ contextBridge.exposeInMainWorld('kimi', {
   },
 
   onRadarItems: on<unknown>(IPC.evRadarItems),
+
+  // channel 模式 (v7.0 P1)
+  ch: {
+    scan: (): Promise<ChannelTree> => ipcRenderer.invoke(IPC.chScan),
+    openSession: (sessionId: string): Promise<OpenSessionResult> => ipcRenderer.invoke(IPC.chOpenSession, sessionId),
+    setPin: (sessionId: string, pinned: boolean): Promise<void> => ipcRenderer.invoke(IPC.chSetPin, sessionId, pinned),
+    setProject: (sessionId: string, projectId: string | null): Promise<void> =>
+      ipcRenderer.invoke(IPC.chSetProject, sessionId, projectId),
+    markViewed: (sessionId: string): Promise<void> => ipcRenderer.invoke(IPC.chMarkViewed, sessionId),
+    archiveSession: (sessionId: string, archived: boolean): Promise<void> =>
+      ipcRenderer.invoke(IPC.chArchiveSession, sessionId, archived),
+    openPath: (path: string): Promise<string> => ipcRenderer.invoke(IPC.chOpenPath, path),
+    setSessionMode: (sessionId: string, mode: 'default' | 'auto' | 'yolo' | 'plan' | null): Promise<void> =>
+      ipcRenderer.invoke(IPC.chSetSessionMode, sessionId, mode),
+    getSessionMode: (sessionId: string): Promise<{ mode: string; source: 'session' | 'global' }> =>
+      ipcRenderer.invoke(IPC.chGetSessionMode, sessionId),
+    setSessionModel: (sessionId: string, model: string | null): Promise<void> =>
+      ipcRenderer.invoke(IPC.chSetSessionModel, sessionId, model),
+    getSessionModel: (sessionId: string): Promise<{ model: string | null; source: 'session' | 'default' }> =>
+      ipcRenderer.invoke(IPC.chGetSessionModel, sessionId),
+    modelOptions: (): Promise<{ value: string; name: string }[]> => ipcRenderer.invoke(IPC.chModelOptions),
+    setSessionThinking: (sessionId: string, thinking: 'low' | 'high' | 'max' | null): Promise<void> =>
+      ipcRenderer.invoke(IPC.chSetSessionThinking, sessionId, thinking),
+    getSessionThinking: (sessionId: string): Promise<{ thinking: string; source: 'session' | 'global' }> =>
+      ipcRenderer.invoke(IPC.chGetSessionThinking, sessionId),
+    projectCreate: (name: string, path?: string): Promise<ChannelProjectRecord> =>
+      ipcRenderer.invoke(IPC.chProjectCreate, name, path),
+    pickFolder: (): Promise<{ name: string; path: string } | null> => ipcRenderer.invoke(IPC.chPickFolder),
+    // P2: 常驻 agent 库 + session 三配置 + 会话生命周期
+    agentList: (): Promise<AgentRecord[]> => ipcRenderer.invoke(IPC.chAgentList),
+    agentCreate: (name: string, description?: string): Promise<AgentRecord> =>
+      ipcRenderer.invoke(IPC.chAgentCreate, name, description),
+    agentUpdate: (id: string, patch: { description?: string; avatar?: string }): Promise<AgentRecord | null> =>
+      ipcRenderer.invoke(IPC.chAgentUpdate, id, patch),
+    agentDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.chAgentDelete, id),
+    agentRead: (id: string): Promise<string> => ipcRenderer.invoke(IPC.chAgentRead, id),
+    agentWrite: (id: string, content: string): Promise<void> => ipcRenderer.invoke(IPC.chAgentWrite, id, content),
+    sessionConfigRead: (sessionId: string): Promise<SessionConfig | null> =>
+      ipcRenderer.invoke(IPC.chSessionConfigRead, sessionId),
+    sessionConfigWrite: (sessionId: string, field: SessionConfigField, content: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.chSessionConfigWrite, sessionId, field, content),
+    newSession: (opts: { cwd: string; agentId?: string }): Promise<{ sessionId: string }> =>
+      ipcRenderer.invoke(IPC.chNewSession, opts),
+    deleteSession: (sessionId: string): Promise<void> => ipcRenderer.invoke(IPC.chDeleteSession, sessionId),
+    // P3a: group 协作 + 动态编排 + worktree + fork
+    groupCreate: (opts: { name: string; projectId?: string; cwd?: string; members: { sessionId: string; role?: string }[] }): Promise<GroupRecord> =>
+      ipcRenderer.invoke(IPC.chGroupCreate, opts),
+    groupList: (projectId?: string): Promise<GroupRecord[]> => ipcRenderer.invoke(IPC.chGroupList, projectId),
+    groupSend: (groupId: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.chGroupSend, groupId, text),
+    groupMessages: (groupId: string): Promise<{ messages: GroupMessage[]; groupMd: string; group: GroupRecord } | null> =>
+      ipcRenderer.invoke(IPC.chGroupMessages, groupId),
+    groupConfig: (groupId: string, patch: GroupConfigPatch): Promise<GroupRecord | null> =>
+      ipcRenderer.invoke(IPC.chGroupConfig, groupId, patch),
+    groupAddMember: (groupId: string, sessionId: string, role?: string): Promise<GroupRecord | null> =>
+      ipcRenderer.invoke(IPC.chGroupAddMember, groupId, sessionId, role),
+    groupCreateMember: (groupId: string, opts: { name: string; description: string }): Promise<GroupRecord | null> =>
+      ipcRenderer.invoke(IPC.chGroupCreateMember, groupId, opts),
+    groupRemoveMember: (groupId: string, sessionId: string): Promise<GroupRecord | null> =>
+      ipcRenderer.invoke(IPC.chGroupRemoveMember, groupId, sessionId),
+    groupDelete: (groupId: string): Promise<void> => ipcRenderer.invoke(IPC.chGroupDelete, groupId),
+    groupPlan: (opts: { taskDescription: string; memberSessionIds: string[] }): Promise<GroupPlanResult> =>
+      ipcRenderer.invoke(IPC.chGroupPlan, opts),
+    orchestrationPrefRead: (): Promise<string> => ipcRenderer.invoke(IPC.chOrchestrationPrefRead),
+    orchestrationPrefWrite: (text: string): Promise<void> => ipcRenderer.invoke(IPC.chOrchestrationPrefWrite, text),
+    worktreeCreate: (opts: { repoPath: string; taskSlug: string }): Promise<WorktreeOpResult> =>
+      ipcRenderer.invoke(IPC.chWorktreeCreate, opts),
+    worktreeList: (repoPath: string): Promise<WorktreeOpResult> => ipcRenderer.invoke(IPC.chWorktreeList, repoPath),
+    worktreeDiff: (repoPath: string, branch: string): Promise<WorktreeOpResult> =>
+      ipcRenderer.invoke(IPC.chWorktreeDiff, repoPath, branch),
+    worktreeMerge: (opts: { repoPath: string; branch: string }): Promise<WorktreeOpResult> =>
+      ipcRenderer.invoke(IPC.chWorktreeMerge, opts),
+    worktreeDiscard: (opts: { repoPath: string; path: string; branch: string }): Promise<WorktreeOpResult> =>
+      ipcRenderer.invoke(IPC.chWorktreeDiscard, opts),
+    forkSession: (sessionId: string): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC.chForkSession, sessionId),
+  },
+  onChChanged: on<void>(IPC.evChChanged),
+  onChGroupEvent: on<GroupEvent>(IPC.evChGroupEvent),
+
+  // 终端三视图 (v7.0 P3b)
+  term: {
+    open: (sessionId: string): Promise<{ termId: string; cwd: string }> => ipcRenderer.invoke(IPC.termOpen, sessionId),
+    input: (termId: string, data: string): void => void ipcRenderer.send(IPC.termInput, termId, data),
+    resize: (termId: string, cols: number, rows: number): void =>
+      void ipcRenderer.send(IPC.termResize, termId, cols, rows),
+    close: (termId: string): void => void ipcRenderer.send(IPC.termClose, termId),
+    visOpen: (sessionId: string): Promise<{ url: string; visId: string }> =>
+      ipcRenderer.invoke(IPC.termVisOpen, sessionId),
+    visClose: (visId: string): void => void ipcRenderer.send(IPC.termVisClose, visId),
+    openExternal: (sessionId: string): Promise<{ ok: boolean; app: 'iTerm' | 'Terminal' }> =>
+      ipcRenderer.invoke(IPC.termOpenExternal, sessionId),
+    /** L2 外开终端的「交还」按钮:手动释放 externallyHeld */
+    release: (sessionId: string): Promise<void> => ipcRenderer.invoke(IPC.termRelease, sessionId),
+    isHeld: (sessionId: string): Promise<boolean> => ipcRenderer.invoke(IPC.termIsHeld, sessionId),
+  },
+  onTermData: on<{ termId: string; data: string }>(IPC.evTermData),
+  onTermExit: on<{ termId: string; code: number }>(IPC.evTermExit),
 
   onCursor: on<CursorPoint>(IPC.evCursor),
   onBallState: on<BallState>(IPC.evBallState),

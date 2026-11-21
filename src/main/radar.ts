@@ -54,12 +54,13 @@ function writeRadarConfig(radar: Radar): void {
 
 function insertItems(radarId: string, items: NewsItem[]): void {
   const d = getDb();
-  const ins = d.prepare(`INSERT OR IGNORE INTO radar_items (id,radar_id,title,summary,source,url,published_at,tags,read,favorite)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  // created_at 是 NOT NULL 无默认值,必须显式给——INSERT OR IGNORE 会把约束错误静默吞掉
+  const ins = d.prepare(`INSERT OR IGNORE INTO radar_items (id,radar_id,title,summary,source,url,published_at,tags,read,favorite,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
   const tx = d.transaction(() => {
     for (const i of items) {
       ins.run(i.id, radarId, i.title, i.summary, i.source, i.url, i.publishedAt,
-        JSON.stringify(i.tags), i.read ? 1 : 0, i.favorite ? 1 : 0);
+        JSON.stringify(i.tags), i.read ? 1 : 0, i.favorite ? 1 : 0, Date.now());
     }
   });
   tx();
@@ -340,7 +341,10 @@ async function runRadar(id: string): Promise<number> {
   if (!radar) return 0;
   let newCount = 0;
   try {
-    const rawLists = await Promise.all(radar.sources.map((s) => fetchSource(s).catch(() => [] as RawItem[])));
+    const rawLists = await Promise.all(radar.sources.map((s) => fetchSource(s).catch((e) => {
+      console.warn(`[radar] ${id} 源抓取失败 ${s.slice(0, 80)}:`, e instanceof Error ? e.message : e);
+      return [] as RawItem[];
+    })));
     const knownRows = getDb().prepare('SELECT url FROM radar_items WHERE radar_id = ?').all(id) as { url: string }[];
     const known = new Set(knownRows.map((r) => r.url));
     const fresh = rawLists.flat().filter((r) => r.url && !known.has(r.url));
@@ -350,8 +354,9 @@ async function runRadar(id: string): Promise<number> {
       insertItems(id, structured.slice(0, MAX_ITEMS));
       newCount = structured.length;
     }
-  } catch {
+  } catch (e) {
     /* keep old items; still record the attempt below */
+    console.warn(`[radar] ${id} 本轮运行失败:`, e instanceof Error ? e.message : e);
   }
   radar.lastRunAt = Date.now();
   writeRadarConfig(radar);

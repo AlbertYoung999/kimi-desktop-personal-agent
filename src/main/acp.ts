@@ -7,8 +7,12 @@ import * as acp from '@agentclientprotocol/sdk';
 import { app } from 'electron';
 import type { WebContents } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { HistoryItem, SessionMeta } from '../shared/types.js';
+import type { AppSettings, HistoryItem, OpenSessionResult, SessionMeta } from '../shared/types.js';
 import { getSessionIndex, getSettings, removeSessionFromIndex, saveSettings, upsertSession } from './store.js';
+import { allChannelMeta, deleteChannelMeta, setChannelAgent, setChannelLastMessage, setChannelMode, setChannelModel, setChannelThinking } from './db.js';
+import { getAgent, readAgentMd } from './agent-library.js';
+import { buildInjectionPrompt, ensureSessionConfigDir, readSessionConfig, sessionConfigDir, writeSessionConfig } from './session-config.js';
+import { findSessionCwd } from './session-scanner.js';
 import { CAPABILITIES } from './capabilities.js';
 import { systemDigest } from './digest.js';
 import { recentDigest } from './signals.js';
@@ -43,6 +47,12 @@ export class ACPManager {
   /** dedicated session for workbench quick-ask (Command Center fallback) */
   /** workbench MCP server url, mounted on the command-center session */
   private workbenchMcpUrl: string | null = null;
+  /** initialize 返回的能力位(design/design-v7.md §3.1:channel 功能按能力降级) */
+  private agentCapabilities: acp.AgentCapabilities | null = null;
+
+  getCapabilities(): acp.AgentCapabilities | null {
+    return this.agentCapabilities;
+  }
 
   setWorkbenchMcpUrl(url: string): void {
     this.workbenchMcpUrl = url;
@@ -98,11 +108,12 @@ export class ACPManager {
     );
     const conn = new acp.ClientSideConnection(() => this.makeClient(), stream);
 
-    await conn.initialize({
+    const initRes = await conn.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
       clientInfo: { name: 'kimi-desktop', version: '0.1.0' },
     });
+    this.agentCapabilities = initRes.agentCapabilities ?? null;
     try {
       await conn.authenticate({ methodId: 'login' });
     } catch (err) {
@@ -209,6 +220,10 @@ export class ACPManager {
             if (this.replaying.has(params.sessionId)) {
               this.appendReplay(params.sessionId, 'agent', text);
             } else {
+              // live chunk:同时进 turn ring buffer(live 接管补放 + 最后一条消息落库)
+              const buf = this.turnBuffers.get(params.sessionId) ?? [];
+              buf.push(text);
+              this.turnBuffers.set(params.sessionId, buf);
               this.emit(IPC.evChunk, { sessionId: params.sessionId, kind: 'text', text });
             }
             break;
@@ -248,6 +263,41 @@ export class ACPManager {
             });
             break;
           }
+          case 'current_mode_update': {
+            // 模式回传:终端 TUI /yolo 等外部改动 → 持久化 + 广播,UI 同步。
+            // 我们自己 setSessionConfigOption 的回执也走这里——与有效值(覆盖 ?? 全局)比对,
+            // 相同则不落库(否则每次 applySessionConfig 都会制造一个假的 session 覆盖)
+            const modeId = (update as acp.CurrentModeUpdate).currentModeId;
+            if (modeId) {
+              const effective = this.sessionModeOverride(params.sessionId) ?? getSettings().permissionMode;
+              if (modeId !== effective) setChannelMode(params.sessionId, modeId);
+              this.emit(IPC.evSessionMode, { sessionId: params.sessionId, modeId });
+            }
+            break;
+          }
+          case 'config_option_update': {
+            // 模型/思考深度回传:TUI /model、/thinking 等外部改动 → 持久化 + 广播。
+            // guard:仅当已有覆盖且与覆盖不同时才落库——无覆盖时 kimi 的初始推送
+            // 只是汇报当前值,落库会把「跟随默认」冻结成假覆盖(session 的配置
+            // 本就存在 kimi 服务端,不持久化也不丢)。事件始终广播。
+            const cu = update as acp.ConfigOptionUpdate;
+            const modelOpt = cu.configOptions?.find((o) => o.id === 'model');
+            const current = modelOpt?.type === 'select' ? String(modelOpt.currentValue) : null;
+            if (current) {
+              if (getSettings().modelCurrent !== current) saveSettings({ modelCurrent: current });
+              const effective = this.sessionModelOverride(params.sessionId);
+              if (effective && current !== effective) setChannelModel(params.sessionId, current);
+              this.emit(IPC.evSessionModel, { sessionId: params.sessionId, model: current });
+            }
+            const thinkingOpt = cu.configOptions?.find((o) => o.id === 'thinking');
+            const thinking = thinkingOpt?.type === 'select' ? String(thinkingOpt.currentValue) : null;
+            if (thinking) {
+              const effective = this.sessionThinkingOverride(params.sessionId);
+              if (effective && thinking !== effective) setChannelThinking(params.sessionId, thinking);
+              this.emit(IPC.evSessionThinking, { sessionId: params.sessionId, thinking });
+            }
+            break;
+          }
           default:
             break;
         }
@@ -285,7 +335,10 @@ export class ACPManager {
           requestId,
           sessionId: params.sessionId,
           title,
-          description: raw ? JSON.stringify(raw).slice(0, 300) : '',
+          // AskUserQuestion 的 questions/options JSON 在 rawInput 里,截太短会丢关键内容
+          description: raw ? JSON.stringify(raw).slice(0, 1000) : '',
+          // 多选项问题(AskUserQuestion)需要完整选项列表才能作答
+          options: options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind })),
         });
         return new Promise((resolve) => {
           this.pendingPermissions.set(requestId, { resolve });
@@ -323,11 +376,19 @@ export class ACPManager {
     return resolved;
   }
 
-  respondPermission(requestId: string, approved: boolean, remember: boolean, sessionId: string): void {
+  respondPermission(requestId: string, approved: boolean, remember: boolean, sessionId: string, optionId?: string): void {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) return;
     this.pendingPermissions.delete(requestId);
     if (approved && remember && sessionId) this.sessionAllow.add(sessionId);
+    // 显式 optionId(多选项问题,如 AskUserQuestion):直接以该选项作答,不再按 kind 推导
+    if (optionId) {
+      const options = this.permissionOptions.get(requestId) ?? [];
+      this.permissionOptions.delete(requestId);
+      const option = options.find((o) => o.optionId === optionId);
+      pending.resolve(option ? { outcome: { outcome: 'selected', optionId: option.optionId } } : { outcome: { outcome: 'cancelled' } });
+      return;
+    }
     // We don't keep the original options here; re-derive from kind preference on the agent side
     // by answering with a synthesized outcome is not possible — so we stored options at request time.
     pending.resolve(this.buildOutcome(requestId, approved, remember));
@@ -381,21 +442,24 @@ export class ACPManager {
     }
   }
 
-  async newSession(kind: 'chat' | 'auto' = 'auto'): Promise<SessionMeta> {
+  async newSession(kind: 'chat' | 'auto' = 'auto', cwd?: string): Promise<SessionMeta> {
     const conn = await this.ensureStarted();
     const settings = getSettings();
+    // channel 页可在指定项目目录下建会话;默认仍是 workspaceDir(悬浮窗行为不变)
+    const sessionCwd = cwd ?? settings.workspaceDir;
     // user-facing chat sessions get the workbench MCP too — any surface is a
     // system agent with the same capability plane (design-v4 §11)
     const mcpServers =
       kind === 'chat' && this.workbenchMcpUrl
         ? [{ type: 'http' as const, name: 'workbench', url: this.workbenchMcpUrl, headers: [] }]
         : [];
-    const res = await conn.newSession({ cwd: settings.workspaceDir, mcpServers });
-    this.registerSessionCwd(res.sessionId, settings.workspaceDir);
+    const res = await conn.newSession({ cwd: sessionCwd, mcpServers });
+    this.registerSessionCwd(res.sessionId, sessionCwd);
+    this.cacheModelOptions(res.configOptions);
     await this.applySessionConfig(res.sessionId);
     const meta: SessionMeta = {
       sessionId: res.sessionId,
-      cwd: settings.workspaceDir,
+      cwd: sessionCwd,
       title: '',
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -405,18 +469,82 @@ export class ACPManager {
     return meta;
   }
 
+  /** per-session 权限模式覆盖(channel_meta.mode),NULL=跟随全局 */
+  private sessionModeOverride(sessionId: string): string | null {
+    return allChannelMeta().find((m) => m.session_id === sessionId)?.mode ?? null;
+  }
+
+  /** per-session 模型覆盖(channel_meta.model),NULL=跟随 kimi 默认 */
+  private sessionModelOverride(sessionId: string): string | null {
+    return allChannelMeta().find((m) => m.session_id === sessionId)?.model ?? null;
+  }
+
+  /** per-session 思考深度覆盖(channel_meta.thinking),NULL=跟随全局 thinking 设置 */
+  private sessionThinkingOverride(sessionId: string): string | null {
+    return allChannelMeta().find((m) => m.session_id === sessionId)?.thinking ?? null;
+  }
+
+  /** 模型选项缓存(内存 + settings.json 持久化),供渲染层随时拉取 */
+  private modelOptions: { value: string; name: string }[] | null = null;
+
+  /** newSession/fork 返回的 configOptions 里缓存 id='model' 的选项 */
+  private cacheModelOptions(configOptions?: acp.SessionConfigOption[] | null): void {
+    const opt = configOptions?.find((o) => o.id === 'model');
+    if (!opt || opt.type !== 'select' || opt.options.length === 0) return;
+    // options 可能是平铺项或分组项(SessionConfigSelectGroup),拍平成 {value,name}
+    const options = opt.options.flatMap((o) =>
+      'options' in o ? o.options.map((sub) => ({ value: sub.value, name: sub.name })) : [{ value: o.value, name: o.name }],
+    );
+    if (options.length === 0) return;
+    this.modelOptions = options;
+    const current = String(opt.currentValue ?? '');
+    const patch: Partial<AppSettings> = {};
+    if (JSON.stringify(getSettings().modelOptions) !== JSON.stringify(options)) patch.modelOptions = options;
+    if (current && getSettings().modelCurrent !== current) patch.modelCurrent = current;
+    if (Object.keys(patch).length > 0) saveSettings(patch);
+  }
+
+  private static readonly BUILTIN_MODEL_OPTIONS = [
+    { value: 'kimi-code/kimi-for-coding', name: 'K2.8 Preview' },
+    { value: 'kimi-code/kimi-for-coding-highspeed', name: 'K2.7 Code Highspeed' },
+    { value: 'kimi-code/k3', name: 'K3' },
+    { value: 'kimi-code/k3-256k', name: 'K3-256k' },
+    { value: 'kimi-code/k3.1-pro', name: 'K3.1 Pro' },
+    { value: 'kimi-code/k3.1-pro-highspeed', name: 'K3.1 Pro Highspeed 2x Usage Cost' },
+  ];
+
+  getModelOptions(): { value: string; name: string }[] {
+    // 缓存(内存→settings)与内置列表取并集:老缓存缺新模型时立即补齐, kimi 侧新增模型时也不丢
+    const cached = this.modelOptions ?? getSettings().modelOptions ?? [];
+    const seen = new Set(cached.map((o) => o.value));
+    return [...cached, ...ACPManager.BUILTIN_MODEL_OPTIONS.filter((o) => !seen.has(o.value))];
+  }
+
   private async applySessionConfig(sessionId: string): Promise<void> {
     if (!this.conn) return;
-    const mode = getSettings().permissionMode;
+    // per-session 覆盖优先,无覆盖回退全局(实测 set_config_option 会话中途切换立即生效)
+    const mode = this.sessionModeOverride(sessionId) ?? getSettings().permissionMode;
     try {
       await this.conn.setSessionConfigOption({ sessionId, configId: 'mode', value: mode });
     } catch (err) {
       console.warn('[acp] set_config_option(mode) failed:', err);
     }
-    const thinking = getSettings().thinking;
-    if (thinking !== undefined) {
+    // per-session 模型覆盖:建 session/load 时一并推送(mode 逻辑不动)
+    const model = this.sessionModelOverride(sessionId);
+    if (model) {
       try {
-        await this.conn.setSessionConfigOption({ sessionId, configId: 'thinking', value: thinking ? 'high' : 'low' });
+        await this.conn.setSessionConfigOption({ sessionId, configId: 'model', value: model });
+      } catch (err) {
+        console.warn('[acp] set_config_option(model) failed:', err);
+      }
+    }
+    // per-session 思考深度覆盖优先,无覆盖回退全局(全局是 boolean,映射 high/low)
+    const thinkingOverride = this.sessionThinkingOverride(sessionId);
+    const globalThinking = getSettings().thinking;
+    const thinking = thinkingOverride ?? (globalThinking !== undefined ? (globalThinking ? 'high' : 'low') : null);
+    if (thinking !== null) {
+      try {
+        await this.conn.setSessionConfigOption({ sessionId, configId: 'thinking', value: thinking });
       } catch {
         /* older kimi without thinking config */
       }
@@ -433,6 +561,73 @@ export class ACPManager {
         console.warn('[acp] set thinking failed:', err);
       }
     }
+  }
+
+  /**
+   * per-session 权限模式(ch:set-session-mode):非 null 落库 + 立即生效;
+   * null 清除覆盖并按全局重设一次。session 不在内存/已断开时容错——落库即可,
+   * 下次 load/openSession 的 applySessionConfig 会重放覆盖。
+   */
+  async setSessionMode(sessionId: string, mode: 'default' | 'auto' | 'yolo' | 'plan' | null): Promise<void> {
+    setChannelMode(sessionId, mode);
+    if (!this.conn) return;
+    const effective = mode ?? getSettings().permissionMode;
+    try {
+      await this.conn.setSessionConfigOption({ sessionId, configId: 'mode', value: effective });
+    } catch (err) {
+      console.warn('[acp] setSessionMode 即时生效失败(覆盖已落库,下次 openSession 重放):', err);
+    }
+  }
+
+  /** ch:get-session-mode:无覆盖返回全局值 + source='global' */
+  getSessionMode(sessionId: string): { mode: string; source: 'session' | 'global' } {
+    const override = this.sessionModeOverride(sessionId);
+    return override ? { mode: override, source: 'session' } : { mode: getSettings().permissionMode, source: 'global' };
+  }
+
+  /**
+   * per-session 模型(ch:set-session-model,对标 setSessionMode):
+   * 非 null 落库 + 立即生效;null 清除覆盖(不主动重设,kimi 侧保留当前值)。
+   * 即时生效失败仅告警——覆盖已落库,下次 load 重放。
+   */
+  async setSessionModel(sessionId: string, model: string | null): Promise<void> {
+    setChannelModel(sessionId, model);
+    if (!this.conn || model === null) return;
+    try {
+      await this.conn.setSessionConfigOption({ sessionId, configId: 'model', value: model });
+    } catch (err) {
+      console.warn('[acp] setSessionModel 即时生效失败(覆盖已落库,下次 openSession 重放):', err);
+    }
+  }
+
+  /** ch:get-session-model:无覆盖返回 null + source='default'(跟随 kimi 默认) */
+  getSessionModel(sessionId: string): { model: string | null; source: 'session' | 'default' } {
+    const override = this.sessionModelOverride(sessionId);
+    if (override) return { model: override, source: 'session' };
+    // 无覆盖:返回观测到的当前模型(configOptions 缓存/外部切换推送),都没有才 null
+    return { model: getSettings().modelCurrent ?? null, source: 'default' };
+  }
+
+  /**
+   * per-session 思考深度(ch:set-session-thinking,对标 mode/model):
+   * 非 null 落库 + 立即生效(支持 'low'|'high'|'max';max 仅 per-session 可选,全局设置不动);
+   * null 清除覆盖回退全局(全局 boolean → 'high'|'low')。
+   */
+  async setSessionThinking(sessionId: string, thinking: 'low' | 'high' | 'max' | null): Promise<void> {
+    setChannelThinking(sessionId, thinking);
+    if (!this.conn || thinking === null) return;
+    try {
+      await this.conn.setSessionConfigOption({ sessionId, configId: 'thinking', value: thinking });
+    } catch (err) {
+      console.warn('[acp] setSessionThinking 即时生效失败(覆盖已落库,下次 openSession 重放):', err);
+    }
+  }
+
+  /** ch:get-session-thinking:无覆盖返回全局值(boolean → 'high'|'low')+ source='global' */
+  getSessionThinking(sessionId: string): { thinking: string; source: 'session' | 'global' } {
+    const override = this.sessionThinkingOverride(sessionId);
+    if (override) return { thinking: override, source: 'session' };
+    return { thinking: getSettings().thinking ? 'high' : 'low', source: 'global' };
   }
 
   async loadSession(sessionId: string): Promise<{ meta: SessionMeta; history: HistoryItem[]; live?: boolean }> {
@@ -474,14 +669,220 @@ export class ACPManager {
   /** sessions with an in-flight prompt turn (load would interrupt them) */
   private busySessions = new Set<string>();
 
-  async prompt(sessionId: string, text: string, modePrompt: string | null, image: { data: string; mimeType: string } | null): Promise<void> {
+  /**
+   * 终端接管中的 session(design/design-v7.md §12,铁律:时分复用)。
+   * L3 内嵌/L2 外开终端打开时标记,关闭(L3 自动)/「交还」按钮(L2 手动)时清除;
+   * 并发双驱动会双写 wire.jsonl,所以 held 期间 ACP 侧禁止 prompt、禁止 load。
+   */
+  private heldSessions = new Set<string>();
+
+  holdSession(sessionId: string): void {
+    this.heldSessions.add(sessionId);
+  }
+
+  releaseSession(sessionId: string): void {
+    this.heldSessions.delete(sessionId);
+  }
+
+  isHeld(sessionId: string): boolean {
+    return this.heldSessions.has(sessionId);
+  }
+
+  /** 当前 turn 的 agent 文本 ring buffer(design/design-v7.md §2.3):live 接管补放 + 最后一条消息落库共用 */
+  private turnBuffers = new Map<string, string[]>();
+  /** openSession 令牌:快速连点切换时作废旧 load 的结果(design/design-v7.md §3.2) */
+  private openToken = 0;
+
+  isBusy(sessionId: string): boolean {
+    return this.busySessions.has(sessionId);
+  }
+
+  /** 决策#2:turn 结束把尾部最后一段 agent 文本(截断 500 字符)落 channel_meta */
+  private flushTurnBuffer(sessionId: string): void {
+    const buf = this.turnBuffers.get(sessionId);
+    this.turnBuffers.delete(sessionId);
+    if (!buf || buf.length === 0) return;
+    const full = buf.join('').trim();
+    if (!full) return;
+    const last = full.split(/\n{2,}/).pop() ?? full;
+    try {
+      setChannelLastMessage(sessionId, last.slice(0, 500), Date.now());
+    } catch (err) {
+      console.warn('[acp] write channel_meta.last_message failed:', err);
+    }
+  }
+
+  /**
+   * 统一会话入口(design/design-v7.md §3.2,铁律:永不 load 忙中 session)。
+   * channel 页选中 / 看板点击 / group 编排器都只准走这里;悬浮窗仍用 loadSession。
+   */
+  async openSession(sessionId: string): Promise<OpenSessionResult> {
+    const token = ++this.openToken;
+    if (this.busySessions.has(sessionId) || this.heldSessions.has(sessionId)) {
+      // 忙中 / 终端接管中 → 补放缓冲、渲染层挂实时流(held 时 buffer 通常为空,由终端视图承担交互)
+      return { mode: 'live', buffered: [...(this.turnBuffers.get(sessionId) ?? [])] };
+    }
+    const { history } = await this.loadSession(sessionId);
+    if (token !== this.openToken) return { mode: 'stale' }; // 已有更新的 openSession 调用,丢弃
+    return { mode: 'history', messages: history };
+  }
+
+  /** sessionId → cwd(仅本进程注册过的;IPC 层再回退 findSessionCwd 磁盘扫描) */
+  getSessionCwd(sessionId: string): string | null {
+    return this.sessionCwds.get(sessionId) ?? null;
+  }
+
+  /**
+   * channel 页建会话(design/design-v7.md §10.2):指定 cwd,可绑定常驻 agent。
+   * 绑定时立即建立三配置目录,并把 agent 定义 + 配置指引包在 <system-reminder>
+   * 里作为首 prompt 注入(ACP 不支持 profile 绑定的绕行);等注入 turn 完成再返回,
+   * busySessions 互斥保证渲染层随后的 prompt 不会与注入并发。
+   */
+  async newChannelSession(opts: { cwd: string; agentId?: string }): Promise<{ sessionId: string }> {
+    const conn = await this.ensureStarted();
+    const cwd = path.resolve(opts.cwd);
+    const res = await conn.newSession({ cwd, mcpServers: [] });
+    this.registerSessionCwd(res.sessionId, cwd);
+    this.cacheModelOptions(res.configOptions);
+    await this.applySessionConfig(res.sessionId);
+    upsertSession({ sessionId: res.sessionId, cwd, title: '', createdAt: Date.now(), updatedAt: Date.now(), kind: 'chat' });
+
+    let agentName = '';
+    let agentDef = '';
+    if (opts.agentId) {
+      const agent = getAgent(opts.agentId);
+      if (agent) {
+        agentName = agent.name;
+        agentDef = readAgentMd(agent.id);
+        setChannelAgent(res.sessionId, agent.id);
+        ensureSessionConfigDir(cwd, res.sessionId); // 常驻 agent:立即建立三配置目录
+      }
+    }
+    const cfg = readSessionConfig(cwd, res.sessionId);
+    const injection = buildInjectionPrompt({
+      agentName,
+      agentDef,
+      sessionId: res.sessionId,
+      hasAgentsMd: cfg.agentsMd.length > 0,
+      hasCurrentProcess: cfg.currentProcessMd.length > 0,
+      hasProduct: cfg.productMd.length > 0,
+    });
+    if (injection) {
+      try {
+        await this.prompt(res.sessionId, injection, null, null);
+      } catch (err) {
+        console.warn('[acp] channel session 首轮注入失败(session 仍可用):', err);
+      }
+      // 注入文本不该成为列表标题:agent 会话用 agent 名,其余留空(回退 lastPrompt)
+      upsertSession({
+        sessionId: res.sessionId,
+        cwd,
+        title: agentName,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        kind: 'chat',
+      });
+    }
+    return { sessionId: res.sessionId };
+  }
+
+  /** 阅后即焚 session 清理(design/design-v7.md §10.1):ACP 删除 + channel_meta + 三配置目录 */
+  async deleteSession(sessionId: string): Promise<void> {
+    if (this.conn) {
+      try {
+        await this.conn.unstable_deleteSession({ sessionId });
+      } catch (err) {
+        // 能力位缺失 / 会话已不存在 → 本地清理照常进行
+        console.warn('[acp] unstable_deleteSession failed(继续本地清理):', err);
+      }
+    }
+    const cwd = this.sessionCwds.get(sessionId) ?? findSessionCwd(sessionId);
+    if (cwd) fs.rmSync(sessionConfigDir(cwd, sessionId), { recursive: true, force: true });
+    deleteChannelMeta(sessionId);
+    removeSessionFromIndex(sessionId);
+    this.turnBuffers.delete(sessionId);
+    this.sessionCwds.delete(sessionId);
+  }
+
+  /** prompt 并收集本轮 agent 全文回复(group 编排器用;复用 askOnce 的 collector 机制) */
+  async promptAndCollect(sessionId: string, text: string): Promise<string> {
+    const buf: string[] = [];
+    this.collectors.set(sessionId, buf);
+    try {
+      await this.prompt(sessionId, text, null, null);
+      return buf.join('').trim();
+    } finally {
+      this.collectors.delete(sessionId);
+    }
+  }
+
+  /** session/fork(design/design-v7.md §9,SDK 0.23 unstable_*):分叉副本可加入 group 参与讨论 */
+  async forkSession(sessionId: string): Promise<{ sessionId: string }> {
+    const conn = await this.ensureStarted();
+    const cwd = this.sessionCwds.get(sessionId) ?? findSessionCwd(sessionId) ?? getSettings().workspaceDir;
+    const res = await conn.unstable_forkSession({ sessionId, cwd });
+    const newId = res.sessionId;
+    this.registerSessionCwd(newId, cwd);
+    this.cacheModelOptions(res.configOptions);
+    await this.applySessionConfig(newId);
+    upsertSession({ sessionId: newId, cwd, title: '', createdAt: Date.now(), updatedAt: Date.now(), kind: 'chat' });
+    return { sessionId: newId };
+  }
+
+  /** turn 结束后自动更新 current-process.md:只对启用了三配置的 session,同一 session 10s 节流 */
+  private lastCpUpdate = new Map<string, number>();
+
+  private maybeUpdateCurrentProcess(sessionId: string, userText: string, agentText: string): void {
+    if (userText.startsWith('<system-reminder>')) return; // 首轮注入不触发
+    if (agentText.length < 20) return; // 没什么可记的
+    const cwd = this.sessionCwds.get(sessionId) ?? findSessionCwd(sessionId);
+    if (!cwd) return;
+    if (!fs.existsSync(sessionConfigDir(cwd, sessionId))) return; // 未启用三配置的 session 不动
+    const now = Date.now();
+    if (now - (this.lastCpUpdate.get(sessionId) ?? 0) < 10_000) return;
+    this.lastCpUpdate.set(sessionId, now);
+    const prev = readSessionConfig(cwd, sessionId).currentProcessMd;
+    const promptText = [
+      '你在维护一个 AI agent 的任务上下文文件 current-process.md(记录「在做什么 / 下一步」)。',
+      '根据下面最新一轮对话增量更新它:保留仍有效的内容、刷新进展,一两句话即可,全文不超过 5 行。',
+      '只输出文件的新内容本身,不要解释,不要 markdown 围栏。',
+      '',
+      `【原 current-process.md】\n${prev || '(空)'}`,
+      '',
+      `【用户最新输入】\n${userText.slice(0, 500)}`,
+      '',
+      `【agent 最新回复】\n${agentText.slice(0, 1500)}`,
+    ].join('\n');
+    void this.askOnce(promptText, 60_000, cwd)
+      .then((reply) => {
+        const cleaned = reply.trim().replace(/^```(?:markdown)?\s*|\s*```$/g, '').trim();
+        if (cleaned) writeSessionConfig(cwd, sessionId, 'currentProcessMd', cleaned);
+      })
+      .catch((err) => console.warn('[acp] current-process 自动更新失败:', err));
+  }
+
+  /** 单条 prompt 的图片上限(实测多张 image block 协议无障碍;超了截断并告警) */
+  private static readonly MAX_PROMPT_IMAGES = 10;
+
+  async prompt(sessionId: string, text: string, modePrompt: string | null, images: { data: string; mimeType: string }[] | null): Promise<void> {
+    // 铁律:永不 prompt 终端接管中的 session(并发双驱动会双写 wire.jsonl)
+    if (this.heldSessions.has(sessionId)) {
+      throw new Error('该 session 正被终端接管中,请先在终端里操作或点击「交还」');
+    }
     // mark busy synchronously BEFORE any await — loadSession must never race
     // ahead of this flag and interrupt the turn with a history replay
     this.busySessions.add(sessionId);
+    this.turnBuffers.delete(sessionId); // 新 turn 开始,清空上一轮的 ring buffer
     const conn = await this.ensureStarted();
     const finalText = modePrompt ? `${modePrompt}\n\n用户输入：\n${text}` : text;
     const blocks: acp.ContentBlock[] = [];
-    if (image) blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType });
+    const imgs = images ?? [];
+    if (imgs.length > ACPManager.MAX_PROMPT_IMAGES) {
+      console.warn(`[acp] prompt 图片 ${imgs.length} 张超上限,截断为 ${ACPManager.MAX_PROMPT_IMAGES} 张`);
+    }
+    for (const img of imgs.slice(0, ACPManager.MAX_PROMPT_IMAGES)) {
+      blocks.push({ type: 'image', data: img.data, mimeType: img.mimeType });
+    }
     if (finalText.trim()) blocks.push({ type: 'text', text: finalText });
     try {
       const res = await conn.prompt({ sessionId, prompt: blocks });
@@ -493,6 +894,9 @@ export class ACPManager {
         updatedAt: Date.now(),
       });
       this.emit(IPC.evTurnDone, { sessionId, stopReason: res.stopReason });
+      const agentText = (this.turnBuffers.get(sessionId) ?? []).join('').trim();
+      this.flushTurnBuffer(sessionId);
+      this.maybeUpdateCurrentProcess(sessionId, text, agentText);
     } finally {
       this.busySessions.delete(sessionId);
     }
@@ -525,6 +929,7 @@ export class ACPManager {
   private async newMainSession(): Promise<string> {
     const conn = await this.ensureStarted();
     const res = await conn.newSession({ cwd: getSettings().workspaceDir, mcpServers: this.workbenchMcpServers() });
+    this.cacheModelOptions(res.configOptions);
     this.registerSessionCwd(res.sessionId, getSettings().workspaceDir);
     this.mainSessionId = res.sessionId;
     saveSettings({ mainSessionId: res.sessionId });
@@ -551,14 +956,14 @@ export class ACPManager {
     this.mainQueue = this.mainQueue
       .then(async () => {
         try {
-          await this.prompt(sid, this.withMemory(text), null, image ?? null);
+          await this.prompt(sid, this.withMemory(text), null, image ? [image] : null);
         } catch (err) {
           const message = String(err);
           const corrupted = /storage append|does not exist|Internal error/i.test(message);
           if (corrupted) {
             console.warn(`[acp] main session ${sid} corrupted, recreating:`, message);
             const newSid = await this.newMainSession();
-            await this.prompt(newSid, this.withMemory(text), null, image ?? null);
+            await this.prompt(newSid, this.withMemory(text), null, image ? [image] : null);
           } else {
             this.emit(IPC.evChunk, { sessionId: sid, kind: 'text', text: `⚠ ${message}` });
             this.emit(IPC.evTurnDone, { sessionId: sid, stopReason: 'error' });
@@ -660,8 +1065,11 @@ export class ACPManager {
       const conn = await this.ensureStarted();
       const effectiveCwd = cwd ?? getSettings().workspaceDir;
       const res = await conn.newSession({ cwd: effectiveCwd, mcpServers: [] });
+      this.cacheModelOptions(res.configOptions);
       this.registerSessionCwd(res.sessionId, effectiveCwd);
       await this.applySessionConfig(res.sessionId);
+      // 标记阅后即焚:scanner 据此在项目树里加 ephemeral(channel 树收进「临时」区)
+      upsertSession({ sessionId: res.sessionId, cwd: effectiveCwd, title: '', createdAt: Date.now(), updatedAt: Date.now(), kind: 'utility' });
       this.utilitySessions.set(key, { id: res.sessionId, uses: 0 });
     }
     const current = this.utilitySessions.get(key)!;

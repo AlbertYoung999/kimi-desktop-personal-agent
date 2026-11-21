@@ -5,14 +5,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { IPC } from '../shared/types.js';
-import type { AppSettings, PromptImage, VaultEntry } from '../shared/types.js';
+import type { AppSettings, GroupConfigPatch, PromptImage, SessionConfigField, VaultEntry } from '../shared/types.js';
 import { ACPManager } from './acp.js';
 import { runBackup, startBackupSchedule } from './backup.js';
 import { readEvolveLog } from './evolve.js';
 import { setWidgetRegistry } from './widget-registry.js';
 import { recordSignal } from './signals.js';
 import { startWorkbenchMcp, TOOL_META } from './mcpserver.js';
-import { getDb, migrateFromJson } from './db.js';
+import { getDb, migrateFromJson, createChannelProject, markChannelViewed, setChannelArchived, setChannelPinned, setChannelProject } from './db.js';
+import { SessionScanner, findSessionCwd, runArchiveMigration } from './session-scanner.js';
+import { createAgent, deleteAgent, listAgents, readAgentMd, updateAgent, writeAgentMd } from './agent-library.js';
+import { readSessionConfig, writeSessionConfig } from './session-config.js';
+import { GroupOrchestrator } from './group-orchestrator.js';
+import { createWorktree, discardWorktree, getDiff, listWorktrees, mergeWorktree } from './worktree-manager.js';
+import { TerminalManager } from './terminal-manager.js';
 import { createTray } from './tray.js';
 import { sampleSysStats } from './sysstats.js';
 import { speak, stopSpeaking, listTtsVoices, setTtsVoice, previewVoice, setTtsProvider, setTtsPiperVoice } from './tts.js';
@@ -78,6 +84,38 @@ const acpManager = new ACPManager(
   () => getWorkbenchWindow()?.webContents ?? null,
   () => getHomeWindow()?.webContents ?? null,
 );
+
+// channel 模式 (v7.0 P1):sessions 目录扫描器,变化经 ch:changed 推到 workbench 窗口
+const sessionScanner = new SessionScanner({
+  isBusy: (sid) => acpManager.isBusy(sid),
+  onChanged: () => {
+    const wc = getWorkbenchWindow()?.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(IPC.evChChanged);
+  },
+});
+
+// group 编排器 (v7.0 P3a):消息流与事件经 ch:group-event 推到 workbench 窗口
+const groupOrchestrator = new GroupOrchestrator({
+  acp: acpManager,
+  push: (payload) => {
+    const wc = getWorkbenchWindow()?.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(IPC.evChGroupEvent, payload);
+  },
+});
+
+// 终端三视图 (v7.0 P3b):pty 数据/退出事件仅发 workbench 窗口
+const terminalManager = new TerminalManager({
+  onData: (termId, data) => {
+    const wc = getWorkbenchWindow()?.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(IPC.evTermData, { termId, data });
+  },
+  onExit: (termId, code) => {
+    const wc = getWorkbenchWindow()?.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(IPC.evTermExit, { termId, code });
+  },
+  hold: (sid) => acpManager.holdSession(sid),
+  release: (sid) => acpManager.releaseSession(sid),
+});
 
 // ---------- sys stats polling (home page left rail) ----------
 
@@ -217,19 +255,19 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.listSessions, () => acpManager.listSessions());
-  ipcMain.handle(IPC.newSession, () => acpManager.newSession('chat'));
+  ipcMain.handle(IPC.newSession, (_e, cwd?: string) => acpManager.newSession('chat', cwd));
   ipcMain.handle(IPC.loadSession, (_e, sessionId: string) => acpManager.loadSession(sessionId));
   ipcMain.handle(IPC.setSessionKind, (_e, p: { sessionId: string; kind: 'chat' | 'auto' }) => {
     setSessionKind(p.sessionId, p.kind);
     return acpManager.listSessions();
   });
-  ipcMain.handle(IPC.prompt, async (_e, sessionId: string, text: string, modeId: string | null, image: PromptImage | null) => {
+  ipcMain.handle(IPC.prompt, async (_e, sessionId: string, text: string, modeId: string | null, images: PromptImage[] | null) => {
     const mode = findMode(modeId);
-    await acpManager.prompt(sessionId, text, mode?.prompt ?? null, image);
+    await acpManager.prompt(sessionId, text, mode?.prompt ?? null, images);
   });
   ipcMain.handle(IPC.cancel, (_e, sessionId: string) => acpManager.cancel(sessionId));
-  ipcMain.on(IPC.permissionResponse, (_e, payload: { requestId: string; approved: boolean; remember: boolean; sessionId: string }) => {
-    acpManager.respondPermission(payload.requestId, payload.approved, payload.remember, payload.sessionId ?? '');
+  ipcMain.on(IPC.permissionResponse, (_e, payload: { requestId: string; approved: boolean; remember: boolean; sessionId: string; optionId?: string }) => {
+    acpManager.respondPermission(payload.requestId, payload.approved, payload.remember, payload.sessionId ?? '', payload.optionId);
   });
 
   ipcMain.handle(IPC.listModes, () => listModes());
@@ -318,6 +356,8 @@ function registerIpc(): void {
     setWidgetRegistry(defs);
   });
   ipcMain.handle(IPC.wbForgeGenerate, (_e, prompt: string) => acpManager.askOnce(prompt, 300_000));
+  // v6.0 自主规划：task decomposition（联网调研 + 路径分解），耗时更长
+  ipcMain.handle(IPC.wbPlanGenerate, (_e, prompt: string) => acpManager.askOnce(prompt, 600_000));
   ipcMain.handle(IPC.wbLibraryList, () => listLibrary());
   ipcMain.handle(IPC.wbLibraryAdd, (_e, item) => addLibraryItem(item));
   ipcMain.handle(IPC.wbLibraryDelete, (_e, id: string) => deleteLibraryItem(id));
@@ -367,6 +407,131 @@ function registerIpc(): void {
   ipcMain.handle(IPC.wbRadarSave, (_e, radar) => saveRadar(radar));
   ipcMain.handle(IPC.wbRadarDelete, (_e, id: string) => deleteRadar(id));
   ipcMain.handle(IPC.wbRadarRunNow, (_e, id: string) => runRadarNow(id));
+
+  // ---- channel 模式 (v7.0 P1, design/design-v7.md §7) ----
+  ipcMain.handle(IPC.chScan, () => sessionScanner.scan());
+  ipcMain.handle(IPC.chOpenSession, (_e, sessionId: string) => acpManager.openSession(sessionId));
+  ipcMain.handle(IPC.chSetPin, (_e, sessionId: string, pinned: boolean) => setChannelPinned(sessionId, pinned));
+  ipcMain.handle(IPC.chSetProject, (_e, sessionId: string, projectId: string | null) =>
+    setChannelProject(sessionId, projectId),
+  );
+  ipcMain.handle(IPC.chMarkViewed, (_e, sessionId: string) => markChannelViewed(sessionId));
+  // 显式归档/恢复(写 channel_meta.archived,触发 ch:changed 让渲染层重扫)
+  ipcMain.handle(IPC.chArchiveSession, (_e, sessionId: string, archived: boolean) => {
+    setChannelArchived(sessionId, archived);
+    const wc = getWorkbenchWindow()?.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(IPC.evChChanged);
+  });
+  // 在 Finder 中打开目录(只读操作;返回值对齐 Electron:空串=成功,否则错误串)
+  ipcMain.handle(IPC.chOpenPath, (_e, p: string) =>
+    typeof p === 'string' && p.length > 0 ? shell.openPath(p) : Promise.resolve('invalid path'),
+  );
+  // per-session 权限模式(default/auto/yolo/plan;null=清除覆盖回退全局)
+  ipcMain.handle(IPC.chSetSessionMode, (_e, sid: string, mode: 'default' | 'auto' | 'yolo' | 'plan' | null) =>
+    acpManager.setSessionMode(sid, mode),
+  );
+  ipcMain.handle(IPC.chGetSessionMode, (_e, sid: string) => acpManager.getSessionMode(sid));
+  // per-session 模型(null=清除覆盖跟随 kimi 默认);model-options 为缓存的选项清单
+  ipcMain.handle(IPC.chSetSessionModel, (_e, sid: string, model: string | null) =>
+    acpManager.setSessionModel(sid, model),
+  );
+  ipcMain.handle(IPC.chGetSessionModel, (_e, sid: string) => acpManager.getSessionModel(sid));
+  ipcMain.handle(IPC.chModelOptions, () => acpManager.getModelOptions());
+  // per-session 思考深度('low'|'high'|'max'|null;null=清除覆盖回退全局)
+  ipcMain.handle(IPC.chSetSessionThinking, (_e, sid: string, thinking: 'low' | 'high' | 'max' | null) =>
+    acpManager.setSessionThinking(sid, thinking),
+  );
+  ipcMain.handle(IPC.chGetSessionThinking, (_e, sid: string) => acpManager.getSessionThinking(sid));
+  ipcMain.handle(IPC.chProjectCreate, (_e, name: string, p?: string) => createChannelProject(name, p ?? null));
+  // 原生目录选择器(新建项目用;不带 pickWorkspaceDir 写 settings 的副作用),取消返回 null
+  ipcMain.handle(IPC.chPickFolder, async () => {
+    const win = getWorkbenchWindow() ?? getChatWindow();
+    if (!win) return null;
+    const res = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+    if (res.canceled || res.filePaths.length === 0) return null;
+    const dir = res.filePaths[0];
+    return { name: path.basename(dir), path: dir };
+  });
+
+  // ---- channel P2: 常驻 agent 库 + session 三配置 + 会话生命周期 (design/design-v7.md §10) ----
+  ipcMain.handle(IPC.chAgentList, () => listAgents());
+  ipcMain.handle(IPC.chAgentCreate, (_e, name: string, description?: string) => createAgent(name, description ?? ''));
+  ipcMain.handle(IPC.chAgentUpdate, (_e, id: string, patch: { description?: string; avatar?: string }) =>
+    updateAgent(id, patch ?? {}),
+  );
+  ipcMain.handle(IPC.chAgentDelete, (_e, id: string) => deleteAgent(id));
+  ipcMain.handle(IPC.chAgentRead, (_e, id: string) => readAgentMd(id));
+  ipcMain.handle(IPC.chAgentWrite, (_e, id: string, content: string) => writeAgentMd(id, content));
+  // 三配置:渲染层只传 sid,cwd 由主进程解析(运行时注册表 → 磁盘 state.json 扫描)
+  const resolveCwd = (sid: string): string | null => acpManager.getSessionCwd(sid) ?? findSessionCwd(sid);
+  ipcMain.handle(IPC.chSessionConfigRead, (_e, sid: string) => {
+    const cwd = resolveCwd(sid);
+    return cwd ? readSessionConfig(cwd, sid) : null;
+  });
+  ipcMain.handle(IPC.chSessionConfigWrite, (_e, sid: string, field: SessionConfigField, content: string) => {
+    const cwd = resolveCwd(sid);
+    if (!cwd) throw new Error(`unknown session cwd: ${sid}`);
+    writeSessionConfig(cwd, sid, field, content);
+  });
+  ipcMain.handle(IPC.chNewSession, async (_e, opts: { cwd: string; agentId?: string }) => {
+    // 包一层日志:渲染层只报 IPC error,具体栈要能在主进程日志里查到
+    try {
+      return await acpManager.newChannelSession(opts);
+    } catch (err) {
+      console.error('[ch:new-session] failed:', err);
+      throw err;
+    }
+  });
+  ipcMain.handle(IPC.chDeleteSession, (_e, sid: string) => acpManager.deleteSession(sid));
+
+  // ---- channel P3a: group 协作 + 动态编排 + worktree + fork (design/design-v7.md §4/§5) ----
+  ipcMain.handle(IPC.chGroupCreate, (_e, opts: { name: string; projectId?: string; cwd?: string; members: { sessionId: string; role?: string }[] }) =>
+    groupOrchestrator.createGroup(opts),
+  );
+  ipcMain.handle(IPC.chGroupList, (_e, projectId?: string) => groupOrchestrator.listGroups(projectId));
+  ipcMain.handle(IPC.chGroupSend, (_e, groupId: string, text: string) => groupOrchestrator.sendToGroup(groupId, text));
+  ipcMain.handle(IPC.chGroupMessages, (_e, groupId: string) => groupOrchestrator.getMessages(groupId));
+  ipcMain.handle(IPC.chGroupConfig, (_e, groupId: string, patch: GroupConfigPatch) =>
+    groupOrchestrator.updateGroupConfig(groupId, patch),
+  );
+  ipcMain.handle(IPC.chGroupAddMember, (_e, groupId: string, sessionId: string, role?: string) =>
+    groupOrchestrator.addMember(groupId, sessionId, role),
+  );
+  ipcMain.handle(IPC.chGroupCreateMember, (_e, groupId: string, opts: { name: string; description: string }) =>
+    groupOrchestrator.createGroupMember(groupId, opts),
+  );
+  ipcMain.handle(IPC.chGroupRemoveMember, (_e, groupId: string, sessionId: string) =>
+    groupOrchestrator.removeMember(groupId, sessionId),
+  );
+  ipcMain.handle(IPC.chGroupDelete, (_e, groupId: string) => groupOrchestrator.deleteGroup(groupId));
+  ipcMain.handle(IPC.chGroupPlan, (_e, opts: { taskDescription: string; memberSessionIds: string[] }) =>
+    groupOrchestrator.planOrchestration(opts),
+  );
+  ipcMain.handle(IPC.chOrchestrationPrefRead, () => getSettings().orchestrationPref ?? '');
+  ipcMain.handle(IPC.chOrchestrationPrefWrite, (_e, text: string) => {
+    saveSettings({ orchestrationPref: typeof text === 'string' ? text : '' });
+  });
+  ipcMain.handle(IPC.chWorktreeCreate, (_e, opts: { repoPath: string; taskSlug: string }) => createWorktree(opts));
+  ipcMain.handle(IPC.chWorktreeList, (_e, repoPath: string) => listWorktrees(repoPath));
+  ipcMain.handle(IPC.chWorktreeDiff, (_e, repoPath: string, branch: string) => getDiff(repoPath, branch));
+  ipcMain.handle(IPC.chWorktreeMerge, (_e, opts: { repoPath: string; branch: string }) => mergeWorktree(opts));
+  ipcMain.handle(IPC.chWorktreeDiscard, (_e, opts: { repoPath: string; path: string; branch: string }) =>
+    discardWorktree(opts),
+  );
+  ipcMain.handle(IPC.chForkSession, (_e, sid: string) => acpManager.forkSession(sid));
+
+  // ---- 终端三视图 (v7.0 P3b, design/design-v7.md §12) ----
+  ipcMain.handle(IPC.termOpen, (_e, sid: string) => terminalManager.openTerminal(sid));
+  ipcMain.on(IPC.termInput, (_e, termId: string, data: string) => terminalManager.input(termId, data));
+  ipcMain.on(IPC.termResize, (_e, termId: string, cols: number, rows: number) =>
+    terminalManager.resize(termId, cols, rows),
+  );
+  ipcMain.on(IPC.termClose, (_e, termId: string) => terminalManager.close(termId));
+  ipcMain.handle(IPC.termVisOpen, (_e, sid: string) => terminalManager.openVis(sid));
+  ipcMain.on(IPC.termVisClose, (_e, visId: string) => terminalManager.closeVis(visId));
+  ipcMain.handle(IPC.termOpenExternal, (_e, sid: string) => terminalManager.openExternalTerminal(sid));
+  ipcMain.handle(IPC.termRelease, (_e, sid: string) => acpManager.releaseSession(sid));
+  ipcMain.handle(IPC.termIsHeld, (_e, sid: string) => acpManager.isHeld(sid));
   ipcMain.on(IPC.ballMove, (_e, pos: { x: number; y: number }) => moveBallTo(pos.x, pos.y));
   ipcMain.on(IPC.setChatPinned, (_e, pinned: boolean) => setChatPinned(pinned));
   ipcMain.handle(IPC.getChatPinned, () => getChatPinned());
@@ -399,13 +564,19 @@ if (!gotLock) {
     createTray();
     getDb(); // 打开 jarvis.db
     migrateFromJson(); // 一次性从 JSON 迁移（幂等）
+    // channel: 一次性 100 天历史整理(显式打标,幂等;之后归档不再按时间计算)
+    if (runArchiveMigration() > 0) {
+      const wc = getWorkbenchWindow()?.webContents;
+      if (wc && !wc.isDestroyed()) wc.send(IPC.evChChanged);
+    }
+    sessionScanner.start(); // channel: fs.watch ~/.kimi-code/sessions(debounce 2s → ch:changed)
     startBackupSchedule();
     getDb(); // 打开 jarvis.db
     migrateFromJson(); // 一次性从 JSON 迁移（幂等）
     setInterval(checkOverdueTasks, 3600_000).unref();
     setTimeout(checkOverdueTasks, 60_000);
 
-    // workbench MCP server (self-evolution plane, design-evolve.md E1)
+    // workbench MCP server (self-evolution plane, design/design-evolve.md E1)
     const mcpUrl = await startWorkbenchMcp({
       forwardToRenderer,
       openExternal: (url) => void shell.openExternal(url),
@@ -480,6 +651,8 @@ if (!gotLock) {
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
     stopRadarSchedulers();
+    sessionScanner.stop();
+    terminalManager.dispose(); // 杀掉所有 pty / kimi vis 子进程
     disposeWindows();
     void acpManager.dispose();
   });

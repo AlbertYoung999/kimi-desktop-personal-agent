@@ -10,7 +10,7 @@
  * 左侧分栏锚点导航 + 右侧滚动分区，样式注入 <style>，类名 wf-agents- 前缀。
  */
 
-import type { AppSettings } from '../../../shared/types';
+import type { AgentRecord, AppSettings } from '../../../shared/types';
 
 const P = 'wf-agents'; // class prefix
 
@@ -110,6 +110,28 @@ function injectStyle(): void {
     .${P}-tool-desc { font-family: var(--mono); font-size: 10.5px; color: var(--muted); flex: 1; min-width: 0; }
 
     .${P}-status { font-family: var(--mono); font-size: 10.5px; letter-spacing: 1px; color: var(--green); min-height: 14px; }
+
+    /* 常驻 Agent 库 */
+    .${P}-agent-item {
+      display: flex; align-items: center; gap: 10px; padding: 8px 6px;
+      border-radius: 8px; cursor: pointer; transition: background 150ms;
+    }
+    .${P}-agent-item:hover { background: rgba(255, 255, 255, 0.05); }
+    .${P}-agent-item + .${P}-agent-item { border-top: 1px solid rgba(0, 240, 255, 0.07); }
+    .${P}-agent-ava { font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }
+    .${P}-agent-name { font-size: 12.5px; color: var(--fg); flex-shrink: 0; }
+    .${P}-agent-desc {
+      font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+      flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .${P}-agent-chevron { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+    .${P}-input {
+      flex: 1; min-width: 120px; font-family: var(--mono); font-size: 11.5px;
+      color: var(--fg); background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--glass-border); border-radius: 8px; padding: 6px 10px; outline: none;
+    }
+    .${P}-input:focus { border-color: var(--border-strong); }
+    .${P}-input.ava { flex: 0 0 64px; min-width: 0; text-align: center; font-size: 14px; }
   `;
   document.head.appendChild(style);
 }
@@ -127,6 +149,8 @@ export function initAgentsPage(): void {
   nav.className = `${P}-nav`;
   const NAV: { id: string; label: string }[] = [
     { id: 'agent', label: 'AGENT 设定' },
+    { id: 'resident', label: '常驻 Agent' },
+    { id: 'orchestration', label: '编排优先模式' },
     { id: 'memory', label: '长期记忆' },
     { id: 'voice', label: '声音' },
     { id: 'tools', label: '工具' },
@@ -203,6 +227,248 @@ export function initAgentsPage(): void {
       .catch(() => (agentStatus.textContent = '保存失败'))
       .finally(() => (agentSave.disabled = false));
   };
+
+  // ---------- 1.5 常驻 Agent 库（design/design-v7.md §10.2） ----------
+  const resPanel = section('resident', '常驻 Agent');
+  let resAgents: AgentRecord[] = [];
+  let resEditingId: string | null = null;
+
+  function renderResident(): void {
+    resPanel.innerHTML = '';
+    if (resEditingId) renderResEditor();
+    else renderResList();
+  }
+
+  function reloadResAgents(): Promise<void> {
+    return window.kimi.ch.agentList().then((list) => {
+      resAgents = list;
+      renderResident();
+    });
+  }
+
+  // ----- 列表视图 -----
+  function renderResList(): void {
+    if (resAgents.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = `${P}-hint`;
+      empty.style.marginTop = '0';
+      empty.textContent = '还没有常驻 Agent。常驻 Agent 可在 channel 页新建 session 时绑定,身份与能力跨项目复用。';
+      resPanel.appendChild(empty);
+    }
+    for (const a of resAgents) {
+      const item = document.createElement('div');
+      item.className = `${P}-agent-item`;
+      const ava = document.createElement('span');
+      ava.className = `${P}-agent-ava`;
+      ava.textContent = a.avatar || '🤖';
+      const name = document.createElement('span');
+      name.className = `${P}-agent-name`;
+      name.textContent = a.name;
+      const desc = document.createElement('span');
+      desc.className = `${P}-agent-desc`;
+      desc.textContent = a.description || '(无描述)';
+      const chevron = document.createElement('span');
+      chevron.className = `${P}-agent-chevron`;
+      chevron.textContent = '›';
+      item.append(ava, name, desc, chevron);
+      item.onclick = () => {
+        resEditingId = a.id;
+        renderResident();
+      };
+      resPanel.appendChild(item);
+    }
+
+    const addRow = document.createElement('div');
+    addRow.className = `${P}-row`;
+    addRow.style.marginTop = '10px';
+    const addBtn = document.createElement('button');
+    addBtn.className = `${P}-btn`;
+    addBtn.textContent = '+ 新建 Agent';
+    addRow.appendChild(addBtn);
+    resPanel.appendChild(addRow);
+
+    addBtn.onclick = () => {
+      addRow.innerHTML = '';
+      const nameInput = document.createElement('input');
+      nameInput.className = `${P}-input`;
+      nameInput.placeholder = '名称(如 marketing)';
+      const descInput = document.createElement('input');
+      descInput.className = `${P}-input`;
+      descInput.placeholder = '描述(可选)';
+      const ok = document.createElement('button');
+      ok.className = `${P}-btn primary`;
+      ok.textContent = '创建';
+      const cancel = document.createElement('button');
+      cancel.className = `${P}-btn`;
+      cancel.textContent = '取消';
+      addRow.append(nameInput, descInput, ok, cancel);
+      nameInput.focus();
+      const submit = () => {
+        const name = nameInput.value.trim();
+        if (!name) {
+          nameInput.focus();
+          return;
+        }
+        ok.disabled = true;
+        void window.kimi.ch
+          .agentCreate(name, descInput.value.trim() || undefined)
+          .then((a) => {
+            resEditingId = a.id; // 建完直接进入编辑(写 AGENTS.md)
+            return reloadResAgents();
+          })
+          .catch(() => {
+            ok.disabled = false;
+          });
+      };
+      ok.onclick = submit;
+      nameInput.onkeydown = (e) => {
+        if (e.key === 'Enter') submit();
+        if (e.key === 'Escape') renderResList();
+      };
+      descInput.onkeydown = nameInput.onkeydown;
+      cancel.onclick = () => renderResList();
+    };
+  }
+
+  // ----- 编辑视图 -----
+  function renderResEditor(): void {
+    const agent = resAgents.find((a) => a.id === resEditingId);
+    if (!agent) {
+      resEditingId = null;
+      renderResList();
+      return;
+    }
+
+    // 头部:返回 + 名称 + 删除
+    const headRow = document.createElement('div');
+    headRow.className = `${P}-row`;
+    const back = document.createElement('button');
+    back.className = `${P}-btn`;
+    back.textContent = '‹ 返回';
+    back.onclick = () => {
+      resEditingId = null;
+      renderResident();
+    };
+    const nameEl = document.createElement('span');
+    nameEl.className = `${P}-agent-name`;
+    nameEl.style.fontSize = '13px';
+    nameEl.textContent = `${agent.avatar || '🤖'} ${agent.name}`;
+    const spacer = document.createElement('span');
+    spacer.className = 'spacer';
+    const del = document.createElement('button');
+    del.className = `${P}-btn`;
+    del.textContent = '删除';
+    del.onclick = () => {
+      if (!window.confirm(`删除常驻 Agent「${agent.name}」？\n删除后不可恢复(已开的 session 不受影响)。`)) return;
+      void window.kimi.ch.agentDelete(agent.id).then(() => {
+        resEditingId = null;
+        return reloadResAgents();
+      });
+    };
+    headRow.append(back, nameEl, spacer, del);
+    resPanel.appendChild(headRow);
+
+    const status = document.createElement('span');
+    status.className = `${P}-status`;
+
+    // description + avatar(失焦即存,走 agentUpdate)
+    const metaRow = document.createElement('div');
+    metaRow.className = `${P}-row`;
+    metaRow.style.marginTop = '10px';
+    const avaInput = document.createElement('input');
+    avaInput.className = `${P}-input ava`;
+    avaInput.value = agent.avatar;
+    avaInput.title = '头像 emoji';
+    avaInput.maxLength = 4;
+    const descInput = document.createElement('input');
+    descInput.className = `${P}-input`;
+    descInput.value = agent.description;
+    descInput.placeholder = '描述';
+    metaRow.append(avaInput, descInput, status);
+    resPanel.appendChild(metaRow);
+
+    const saveMeta = (patch: { description?: string; avatar?: string }) => {
+      void window.kimi.ch.agentUpdate(agent.id, patch).then((updated) => {
+        if (updated) Object.assign(agent, updated);
+        status.textContent = '已保存 ✓';
+        setTimeout(() => (status.textContent = ''), 2000);
+      });
+    };
+    avaInput.onchange = () => saveMeta({ avatar: avaInput.value.trim() || '🤖' });
+    descInput.onchange = () => saveMeta({ description: descInput.value.trim() });
+
+    // AGENTS.md 全文编辑器(自动保存:防抖 1s + 失焦)
+    const editor = document.createElement('textarea');
+    editor.className = `${P}-editor`;
+    editor.spellcheck = false;
+    editor.placeholder = '# AGENTS.md\n\n该 agent 的身份、能力与边界…';
+    editor.style.marginTop = '10px';
+    const hint = document.createElement('div');
+    hint.className = `${P}-hint`;
+    hint.textContent = '这是该 agent 的能力定义，在所有项目中生效（新 session 首轮注入）。';
+    resPanel.append(editor, hint);
+
+    void window.kimi.ch.agentRead(agent.id).then((c) => {
+      editor.value = c;
+    });
+
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      void window.kimi.ch.agentWrite(agent.id, editor.value).then(() => {
+        status.textContent = '已保存 ✓';
+        setTimeout(() => (status.textContent = ''), 2000);
+      });
+    };
+    editor.addEventListener('input', () => {
+      status.textContent = '…';
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(flush, 1000);
+    });
+    editor.addEventListener('blur', flush);
+  }
+
+  void reloadResAgents();
+
+  // ---------- 1.6 编排优先模式（design/design-v7.md §4.4，决策#5） ----------
+  const orchPanel = section('orchestration', '编排优先模式');
+  const orchEditor = document.createElement('textarea');
+  orchEditor.className = `${P}-editor`;
+  orchEditor.spellcheck = false;
+  orchEditor.placeholder = '例如：默认一个 coordinator 统筹、写文件的任务优先分叉 + worktree、讨论型任务不超过 5 轮…';
+  const orchRow = document.createElement('div');
+  orchRow.className = `${P}-row`;
+  orchRow.style.marginTop = '10px';
+  const orchStatus = document.createElement('span');
+  orchStatus.className = `${P}-status`;
+  orchRow.appendChild(orchStatus);
+  const orchHint = document.createElement('div');
+  orchHint.className = `${P}-hint`;
+  orchHint.textContent = 'group 任务 AI 规划编排时的系统先验，可描述你偏好的协作模式。';
+  orchPanel.append(orchEditor, orchRow, orchHint);
+  void window.kimi.ch.orchestrationPrefRead().then((c) => {
+    orchEditor.value = c;
+  });
+  let orchTimer: ReturnType<typeof setTimeout> | null = null;
+  const orchFlush = () => {
+    if (orchTimer) {
+      clearTimeout(orchTimer);
+      orchTimer = null;
+    }
+    void window.kimi.ch.orchestrationPrefWrite(orchEditor.value).then(() => {
+      orchStatus.textContent = '已保存 ✓';
+      setTimeout(() => (orchStatus.textContent = ''), 2000);
+    });
+  };
+  orchEditor.addEventListener('input', () => {
+    orchStatus.textContent = '…';
+    if (orchTimer) clearTimeout(orchTimer);
+    orchTimer = setTimeout(orchFlush, 1000);
+  });
+  orchEditor.addEventListener('blur', orchFlush);
 
   // ---------- 2. 长期记忆（memory.md） ----------
   const memPanel = section('memory', '长期记忆');

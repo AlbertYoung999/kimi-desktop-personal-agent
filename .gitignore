@@ -2,16 +2,13 @@ node_modules/
 dist/
 .DS_Store
 
-# 内部工作文档与私人素材，不进仓库
+# 内部工作文档与私人素材,不进仓库
 prd.md
 prd/
-design.md
-design-workbench.md
-design-evolve.md
-design-v4.md
-design-data-plane.md
-design-review.md
-changelog-*.md
+design/
 image.png
 image-1.png
 assets/
+
+# 本地参考项目(v1.0 ACP 参考),406MB 不进仓库
+resources/20260707-talking-to-the-moon/

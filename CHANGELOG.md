@@ -4,6 +4,41 @@ All notable changes to Kimi Desktop Personal Agent will be documented in this fi
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+各版本详细开发记录见 `changelogs/changelog-v{版本}-{版本开始日期}.md`(每个子版本一份,推 GitHub 时更新)。
+
+## [0.7.0] - 2026-09-28
+
+版本主题:**Channel 模式 + 多 Session 协作**——session 管理从"悬浮窗平铺"进化为"slack 式频道 + 常驻 agent 团队 + group 多智能体协作"。详细开发记录见 `changelogs/changelog-v0.7.0-20260920.md`。
+
+### Added
+
+- **Channel 模式**:新导航页,项目树按文件夹聚合全部 kimi-code session(1317 个,含两代 schema 兼容 + session_index.jsonl 精确归因);状态条(运行中/待处理/置顶)、默认折叠、更新圆点、Cmd+K 跳转、session 看板(置顶/运行中/待处理/空闲四栏)
+- **对话面板工厂化**:`createChatPanel` 工厂,悬浮窗与 channel 页共用一套消息渲染/流式/权限/截图粘贴/右键菜单
+- **统一会话入口 openSession**:永不 load 忙中 session(实测 load 杀 turn),history/live/stale 三分支 + turn ring buffer 补放;per-session 最后一条消息落库
+- **常驻 Agent 体系**:agent 库(AGENTS.md + skills/),能力 1:N 复用、单点维护持续进化;新建 session 首轮注入(system-reminder 包裹,回放不可见);session 三配置(AGENTS.md/current-process.md/product.md)抽屉,current-process.md turn 结束自动更新
+- **Group 多智能体协作**:新建 group 自动创建 coordinator session;@mention 路由(含 label 兜底)、描述创建成员、每 10 轮自动压缩进 group.md;任务启动 AI 动态编排(预设降级为「编排优先模式」先验);autonomous 自主讨论(maxRounds 硬护栏)
+- **worktree 并发隔离**:同项目多写 session 自动 git worktree,Orca 式 diff 行内批注回喂,合并冲突自动 abort 复原
+- **终端三视图**:L3 内嵌 xterm.js+node-pty(接管/交还握手,时分复用防双写)、L1 kimi vis 观察、L2 iTerm/Terminal 外开
+- **per-session 控制**:权限模式(常规/Auto/YOLO/Plan)、模型(6 个选项,K3.1 Pro 系)、思考深度(Low/High/Max)——菜单按钮化,即切即生效,TUI 侧改动双向同步
+- **一次性历史归档**:1129 个超 100 天 session 归档(显式打标非常驻规则),窗口化渲染、可恢复;session 行 ··· 菜单、项目右键(新建 session/打开目录)
+- **队列增强**:per-session 队列、队列项编辑/直接发送/取消;多图粘贴(上限 10,实测 ACP 多 image block 可用);per-session 输入草稿
+- **Radar 源管理**:源列表化,逐行删除(二次确认)
+
+### Fixed
+
+- **Info Radar 五周静默失效**:radar_items.created_at NOT NULL 无默认值,INSERT 缺列被 INSERT OR IGNORE 吞掉,三重静默 catch 掩盖;补列 + 日志
+- **AskUserQuestion 卡死**:权限通道只有布尔应答,多选题无法作答;evPermission 带完整 options,渲染选项按钮,显式 optionId 应答
+- **新建 session 菜单瞬杀**:二级菜单被 document「菜单外点击」在同一 click 事件里误杀(stopPropagation)
+- group:@ 路由不匹配、group.md 假保存(抽屉读缓存)
+
+## [0.6.0] - 2026-09-01
+
+版本主题:**Task Flow 自主规划**——一句话生成学习/研究计划并落到日程。详细开发记录见 `changelogs/changelog-v0.6.0-20260901.md`。
+
+### Added
+
+- 「新增 → 新建规划」:输入主任务描述 + 项目 + 模式(快速学习 1d / 完整学习 2-5d)+ 补充要求,ACP 后台联网调研并分解为带排期的子任务路径,结果页逐行可编辑,确认后批量创建并自动切到日程视图
+
 ## [0.5.0] - 2026-08-29
 
 版本主题：**Task Flow 进化为完整的时间管理系统**——子任务、今日待办、日程排期、番茄钟复盘，外加声音分场景开关。

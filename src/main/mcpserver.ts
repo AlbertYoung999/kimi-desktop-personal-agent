@@ -15,7 +15,7 @@ import { getWidgetRegistry } from './widget-registry.js';
 import { listEngines, getLayout, listLibrary, listProjects, listTasks as listTasksSnapshot, readMemory, saveTask, updateLibraryItem, wbRoot } from './workbench.js';
 
 /**
- * Workbench MCP server — the self-evolution plane (design-evolve.md).
+ * Workbench MCP server — the self-evolution plane (design/design-evolve.md).
  * E1: six core tools. E2: per-domain mutation tools + artifact_modify + undo.
  */
 

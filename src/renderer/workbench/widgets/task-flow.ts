@@ -371,6 +371,70 @@ const CSS = `
   position: absolute; left: 2px; right: 2px; border-radius: 4px;
   border: 1px dashed var(--neon); background: rgba(0,240,255,0.1); pointer-events: none; z-index: 2;
 }
+
+/* new dropdown menu */
+.wf-task-flow-newmenu {
+  position: absolute; z-index: 30; min-width: 132px; padding: 4px;
+  background: var(--card); border: 1px solid var(--border-strong); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5); display: flex; flex-direction: column;
+  animation: wf-task-flow-slidein 150ms var(--ease-in);
+}
+.wf-task-flow-newmenu button {
+  border: none; background: none; color: var(--fg); font: inherit; font-size: 12px;
+  text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+}
+.wf-task-flow-newmenu button:hover { background: rgba(0,240,255,0.08); color: var(--neon); }
+
+/* plan panel (v6.0 自主规划) */
+.wf-task-flow-planpanel { width: min(440px, 92%); }
+.wf-task-flow-planseg { flex: 1; display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.wf-task-flow-planseg button {
+  flex: 1; border: none; background: transparent; color: var(--muted);
+  font: inherit; font-size: 11.5px; padding: 5px 0; cursor: pointer;
+}
+.wf-task-flow-planseg button.active { color: var(--neon); background: rgba(0,240,255,0.08); }
+.wf-task-flow-planloading {
+  position: relative; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: rgba(0,240,255,0.04); color: var(--neon); font-size: 12px;
+  padding: 20px 14px; text-align: center;
+}
+.wf-task-flow-planloading::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--neon), transparent);
+  animation: wf-task-flow-planscan 1.6s linear infinite;
+}
+@keyframes wf-task-flow-planscan { from { top: 0; } to { top: 100%; } }
+.wf-task-flow-planloading-sub { font-size: 10px; color: var(--muted); margin-top: 8px; }
+.wf-task-flow-planerror { color: var(--error); font-size: 12px; }
+.wf-task-flow-plansummary { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 11.5px; color: var(--muted); }
+.wf-task-flow-plansummary summary { cursor: pointer; color: var(--neon); font-family: var(--mono); font-size: 10.5px; letter-spacing: 1px; }
+.wf-task-flow-plansummary-text { margin-top: 6px; line-height: 1.5; }
+.wf-task-flow-planraw {
+  max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  font-family: var(--mono); font-size: 10px; color: var(--disabled); margin: 6px 0 0;
+}
+.wf-task-flow-planrows { display: flex; flex-direction: column; gap: 6px; }
+.wf-task-flow-planrow {
+  display: flex; flex-direction: column; gap: 5px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+  background: rgba(255,255,255,0.02);
+}
+.wf-task-flow-planrow-top { display: flex; align-items: center; gap: 6px; }
+.wf-task-flow-planday { display: flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 10px; color: var(--muted); flex-shrink: 0; }
+.wf-task-flow-planday button {
+  width: 18px; height: 18px; border: 1px solid var(--border); background: transparent;
+  color: var(--muted); border-radius: 4px; cursor: pointer; font-size: 11px; line-height: 1; padding: 0;
+}
+.wf-task-flow-planday button:hover { color: var(--neon); border-color: var(--border-strong); }
+.wf-task-flow-plantime {
+  width: 74px; border: 1px solid var(--border); border-radius: 4px;
+  background: rgba(0,0,0,0.25); color: var(--fg); font-family: var(--mono); font-size: 11px;
+  padding: 2px 4px; outline: none; color-scheme: dark;
+}
+.wf-task-flow-plantime:focus { border-color: var(--border-strong); }
+.wf-task-flow-plandash { color: var(--disabled); font-size: 10px; }
+.wf-task-flow-planrow-top .wf-task-flow-subdel { margin-left: auto; }
+.wf-task-flow-plandesc { font-size: 10.5px; color: var(--disabled); line-height: 1.4; }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -594,6 +658,7 @@ registerWidget({
     body.appendChild(root);
 
     let panelEl: HTMLElement | null = null;
+    let planPanelEl: HTMLElement | null = null;
 
     /* ---------- data ---------- */
 
@@ -828,7 +893,46 @@ registerWidget({
       state.query = search.value.trim().toLowerCase();
       renderContent();
     });
-    btnNew.addEventListener('click', () => openDetail(null));
+    /* ----- ＋ 新建：下拉菜单（新建任务 / 新建规划 ✨） ----- */
+
+    let newMenu: HTMLElement | null = null;
+
+    function closeNewMenu(): void {
+      newMenu?.remove();
+      newMenu = null;
+      document.removeEventListener('mousedown', onNewMenuOutside, true);
+    }
+
+    const onNewMenuOutside = (e: Event): void => {
+      const target = e.target as Node | null;
+      if (newMenu && target && !newMenu.contains(target) && !btnNew.contains(target)) closeNewMenu();
+    };
+
+    btnNew.addEventListener('click', () => {
+      if (newMenu) {
+        closeNewMenu();
+        return;
+      }
+      const menu = el('div', 'wf-task-flow-newmenu');
+      const add = (label: string, onClick: () => void): void => {
+        const item = el('button', '', label);
+        item.addEventListener('click', () => {
+          closeNewMenu();
+          onClick();
+        });
+        menu.appendChild(item);
+      };
+      add('新建任务', () => openDetail(null));
+      add('新建规划 ✨', () => openPlan());
+      // 定位到按钮下方（root 是 position:relative）
+      const r = btnNew.getBoundingClientRect();
+      const rr = root.getBoundingClientRect();
+      menu.style.top = `${r.bottom - rr.top + 4}px`;
+      menu.style.right = `${Math.max(0, rr.right - r.right)}px`;
+      root.appendChild(menu);
+      newMenu = menu;
+      document.addEventListener('mousedown', onNewMenuOutside, true);
+    });
     syncViewButtons();
 
     /* ---------- board ---------- */
@@ -1709,6 +1813,7 @@ registerWidget({
     /** taskId === null → 新建草稿（首次有标题的自动保存才真正创建） */
     function openDetail(taskId: string | null): void {
       closeDetail();
+      closePlan();
       const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
       if (taskId && !existing) return;
       const draft: Task = existing ? { ...existing, tags: [...existing.tags] } : blankTask('backlog');
@@ -2048,6 +2153,450 @@ registerWidget({
           btn.textContent = '启动失败，重试';
           btn.disabled = false;
         }
+      }
+    }
+
+    /* ---------- plan（v6.0 自主规划） ---------- */
+
+    interface PlanRow {
+      title: string;
+      description: string;
+      day: number;
+      start: string;
+      end: string;
+    }
+
+    type PlanStage = 'form' | 'loading' | 'result' | 'error';
+
+    /** 表单输入跨阶段保留（重试/返回修改不丢） */
+    const planForm = {
+      desc: '',
+      projectId: '',
+      newProjectName: '',
+      mode: 'fast' as 'fast' | 'full',
+      extra: '',
+    };
+    let planStage: PlanStage = 'form';
+    let planRows: PlanRow[] = [];
+    let planSummary = '';
+    let planRaw = '';
+    let planBusy = false;
+    let planBodyEl: HTMLElement | null = null;
+    let planFootEl: HTMLElement | null = null;
+
+    function closePlan(): void {
+      planPanelEl?.remove();
+      planPanelEl = null;
+      planBodyEl = null;
+      planFootEl = null;
+    }
+
+    function openPlan(): void {
+      closeDetail();
+      closePlan();
+      planStage = 'form';
+      const panel = el('div', 'wf-task-flow-panel wf-task-flow-planpanel');
+      planPanelEl = panel;
+      panel.addEventListener('click', (e) => e.stopPropagation());
+
+      const head = el('div', 'wf-task-flow-panelhead');
+      head.appendChild(el('span', '', '新建规划 ✨'));
+      const close = el('button', 'wf-task-flow-panelclose', '✕');
+      close.addEventListener('click', () => {
+        if (!planBusy) closePlan();
+      });
+      head.appendChild(close);
+      panel.appendChild(head);
+
+      const pbody = el('div', 'wf-task-flow-panelbody');
+      const foot = el('div', 'wf-task-flow-panelfoot');
+      planBodyEl = pbody;
+      planFootEl = foot;
+      panel.append(pbody, foot);
+      root.appendChild(panel);
+      renderPlanBody();
+    }
+
+    function planRow(label: string, control: HTMLElement): HTMLElement {
+      const row = el('div', 'wf-task-flow-field');
+      row.append(el('label', '', label), control);
+      return row;
+    }
+
+    function renderPlanBody(): void {
+      const pbody = planBodyEl;
+      const foot = planFootEl;
+      if (!pbody || !foot) return;
+      pbody.innerHTML = '';
+      foot.innerHTML = '';
+
+      if (planStage === 'form') renderPlanForm(pbody, foot);
+      else if (planStage === 'loading') {
+        const box = el('div', 'wf-task-flow-planloading');
+        box.appendChild(el('div', '', '正在联网调研并规划路径…'));
+        box.appendChild(el('div', 'wf-task-flow-planloading-sub', '生成式任务，通常需要 1–3 分钟，最长 10 分钟'));
+        pbody.appendChild(box);
+      } else if (planStage === 'error') renderPlanError(pbody, foot);
+      else renderPlanResult(pbody, foot);
+    }
+
+    /** 阶段 1 · 表单 */
+    function renderPlanForm(pbody: HTMLElement, foot: HTMLElement): void {
+      const desc = el('textarea', 'wf-task-flow-textarea') as HTMLTextAreaElement;
+      desc.style.minHeight = '72px';
+      desc.placeholder = '想研究/学习什么？如：Multi-agent Benchmark 研究';
+      desc.value = planForm.desc;
+      desc.addEventListener('input', () => {
+        planForm.desc = desc.value;
+      });
+      pbody.appendChild(desc);
+
+      // 项目：现有项目 + 新建
+      const projSelP = el('select', 'wf-task-flow-select') as HTMLSelectElement;
+      const addOpt = (value: string, label: string): void => {
+        const o = el('option', '', label) as HTMLOptionElement;
+        o.value = value;
+        projSelP.appendChild(o);
+      };
+      if (!state.projects.some((p) => p.id === DEFAULT_PROJECT_ID)) addOpt(DEFAULT_PROJECT_ID, '默认');
+      for (const p of state.projects) addOpt(p.id, p.name);
+      addOpt(NEW_PROJECT_VALUE, '＋ 新建项目…');
+      projSelP.value = planForm.projectId || activeProjectId();
+      planForm.projectId = projSelP.value;
+      pbody.appendChild(planRow('项目', projSelP));
+
+      const newProj = el('input', 'wf-task-flow-input') as HTMLInputElement;
+      newProj.placeholder = '新项目名称';
+      newProj.value = planForm.newProjectName;
+      newProj.style.display = projSelP.value === NEW_PROJECT_VALUE ? '' : 'none';
+      newProj.addEventListener('input', () => {
+        planForm.newProjectName = newProj.value;
+      });
+      projSelP.addEventListener('change', () => {
+        planForm.projectId = projSelP.value;
+        newProj.style.display = projSelP.value === NEW_PROJECT_VALUE ? '' : 'none';
+        if (projSelP.value === NEW_PROJECT_VALUE) newProj.focus();
+      });
+      pbody.appendChild(newProj);
+
+      // 模式：分段二选一
+      const seg = el('div', 'wf-task-flow-planseg');
+      const segBtns: HTMLButtonElement[] = [];
+      const mkMode = (m: 'fast' | 'full', label: string): void => {
+        const b = el('button', planForm.mode === m ? 'active' : '', label) as HTMLButtonElement;
+        b.addEventListener('click', () => {
+          planForm.mode = m;
+          for (const x of segBtns) x.classList.toggle('active', x === b);
+        });
+        segBtns.push(b);
+        seg.appendChild(b);
+      };
+      mkMode('fast', '快速学习（1 天内）');
+      mkMode('full', '完整学习（2–5 天）');
+      pbody.appendChild(planRow('模式', seg));
+
+      const extra = el('textarea', 'wf-task-flow-textarea') as HTMLTextAreaElement;
+      extra.style.minHeight = '54px';
+      extra.placeholder = '其他补充（可选）：时间预算、偏好资料类型…';
+      extra.value = planForm.extra;
+      extra.addEventListener('input', () => {
+        planForm.extra = extra.value;
+      });
+      pbody.appendChild(extra);
+
+      const go = el('button', 'wf-task-flow-btn primary', '开始规划');
+      go.addEventListener('click', () => {
+        if (!planForm.desc.trim()) {
+          desc.focus();
+          return;
+        }
+        void runPlan();
+      });
+      foot.appendChild(go);
+      const cancel = el('button', 'wf-task-flow-btn', '取消');
+      cancel.addEventListener('click', closePlan);
+      foot.appendChild(cancel);
+    }
+
+    /** 阶段 2 · 解析失败/生成失败：原始回复可折叠查看 + 重试（回表单保留输入） */
+    function renderPlanError(pbody: HTMLElement, foot: HTMLElement): void {
+      pbody.appendChild(el('div', 'wf-task-flow-planerror', '规划失败或结果解析失败，请重试'));
+      if (planRaw) {
+        const det = el('details', 'wf-task-flow-plansummary');
+        det.appendChild(el('summary', '', '查看原始回复'));
+        det.appendChild(el('pre', 'wf-task-flow-planraw', planRaw.slice(0, 4000)));
+        pbody.appendChild(det);
+      }
+      const retry = el('button', 'wf-task-flow-btn primary', '重试');
+      retry.addEventListener('click', () => {
+        planStage = 'form';
+        renderPlanBody();
+      });
+      foot.appendChild(retry);
+      const cancel = el('button', 'wf-task-flow-btn', '取消');
+      cancel.addEventListener('click', closePlan);
+      foot.appendChild(cancel);
+    }
+
+    /** 阶段 2 · 结果编辑：摘要折叠 + 可编辑子任务行 + 加一行 */
+    function renderPlanResult(pbody: HTMLElement, foot: HTMLElement): void {
+      if (planSummary) {
+        const det = el('details', 'wf-task-flow-plansummary');
+        det.appendChild(el('summary', '', '调研摘要 ▾'));
+        det.appendChild(el('div', 'wf-task-flow-plansummary-text', planSummary));
+        pbody.appendChild(det);
+      }
+
+      const rows = el('div', 'wf-task-flow-planrows');
+      planRows.forEach((r, i) => rows.appendChild(renderPlanRow(r, i)));
+      pbody.appendChild(rows);
+
+      const add = el('button', 'wf-task-flow-btn', '＋ 加一行');
+      add.addEventListener('click', () => {
+        const lastDay = planRows.length > 0 ? planRows[planRows.length - 1].day : 1;
+        planRows.push({ title: '', description: '', day: lastDay, start: '10:00', end: '11:00' });
+        renderPlanBody();
+      });
+      pbody.appendChild(add);
+
+      const confirm = el('button', 'wf-task-flow-btn primary', '确认创建');
+      confirm.addEventListener('click', () => {
+        void persistPlan();
+      });
+      foot.appendChild(confirm);
+      const back = el('button', 'wf-task-flow-btn', '返回修改');
+      back.addEventListener('click', () => {
+        planStage = 'form';
+        renderPlanBody();
+      });
+      foot.appendChild(back);
+    }
+
+    function renderPlanRow(r: PlanRow, index: number): HTMLElement {
+      const row = el('div', 'wf-task-flow-planrow');
+
+      const top = el('div', 'wf-task-flow-planrow-top');
+      // 第 N 天：-/+
+      const dayWrap = el('div', 'wf-task-flow-planday');
+      const minus = el('button', '', '−');
+      const dayLabel = el('span', '', `第 ${r.day} 天`);
+      const plus = el('button', '', '＋');
+      minus.addEventListener('click', () => {
+        r.day = Math.max(1, r.day - 1);
+        dayLabel.textContent = `第 ${r.day} 天`;
+      });
+      plus.addEventListener('click', () => {
+        r.day += 1;
+        dayLabel.textContent = `第 ${r.day} 天`;
+      });
+      dayWrap.append(minus, dayLabel, plus);
+      top.appendChild(dayWrap);
+
+      const startI = el('input', 'wf-task-flow-plantime') as HTMLInputElement;
+      startI.type = 'time';
+      startI.value = r.start;
+      startI.addEventListener('change', () => {
+        if (startI.value) r.start = startI.value;
+      });
+      const endI = el('input', 'wf-task-flow-plantime') as HTMLInputElement;
+      endI.type = 'time';
+      endI.value = r.end;
+      endI.addEventListener('change', () => {
+        if (endI.value) r.end = endI.value;
+      });
+      top.append(startI, el('span', 'wf-task-flow-plandash', '–'), endI);
+
+      const del = el('button', 'wf-task-flow-subdel', '✕');
+      del.title = '删除该行';
+      del.addEventListener('click', () => {
+        planRows.splice(index, 1);
+        renderPlanBody();
+      });
+      top.appendChild(del);
+      row.appendChild(top);
+
+      const titleI = el('input', 'wf-task-flow-input') as HTMLInputElement;
+      titleI.value = r.title;
+      titleI.placeholder = '子任务标题';
+      titleI.addEventListener('input', () => {
+        r.title = titleI.value;
+      });
+      row.appendChild(titleI);
+
+      if (r.description) {
+        const d = el('div', 'wf-task-flow-plandesc', r.description);
+        d.title = r.description;
+        row.appendChild(d);
+      }
+      return row;
+    }
+
+    /** 拼 prompt（模板见 v6.0 需求），调后台 utility session */
+    function buildPlanPrompt(): string {
+      const d = new Date();
+      const today = `${dateKeyOf(d)} 周${WEEKDAYS[(d.getDay() + 6) % 7]}`;
+      const modeText =
+        planForm.mode === 'fast'
+          ? '快速学习：1 天内完成，只保留必学的最小路径，可选可不选的不要排进来'
+          : '完整学习：按任务复杂度排 2-5 天，概念与实操结合，覆盖完整研究该主题所需的路径';
+      const extraText = planForm.extra.trim() ? `补充要求：${planForm.extra.trim()}` : '';
+      return `你是学习路径规划师。用户想研究/学习：「${planForm.desc.trim()}」。${extraText}
+模式：${modeText}。
+请先联网调研该主题最核心、最关键的学习内容与现有最佳实践，然后分解为按顺序执行的子任务序列。
+今天是 ${today}，规划从今天开始（day=1 即今天）。
+输出要求：第一行输出 100 字以内的调研摘要（关键学习点），然后输出且只输出一个 \`\`\`json 代码块，格式：
+{"subtasks": [{"title": "短标题", "description": "这个子任务要做什么/产出什么", "day": 1, "start": "10:00", "end": "12:00"}]}
+规则：day 从 1 开始递增；start/end 是 24h 制 HH:mm；每个子任务 1-3 小时；每天 2-4 个时间块，块之间留间隔；时间不要排进 23:00 之后。`;
+    }
+
+    async function runPlan(): Promise<void> {
+      if (!planPanelEl || planBusy) return;
+      planBusy = true;
+      planStage = 'loading';
+      renderPlanBody();
+      try {
+        const reply = await ctx.api.planGenerate(buildPlanPrompt());
+        planRaw = reply;
+        const parsed = parsePlanReply(reply);
+        if (parsed) {
+          planSummary = parsed.summary;
+          planRows = parsed.subs;
+          planStage = 'result';
+        } else {
+          planStage = 'error';
+        }
+      } catch (err) {
+        planRaw = String(err);
+        planStage = 'error';
+      } finally {
+        planBusy = false;
+        if (planPanelEl) renderPlanBody();
+      }
+    }
+
+    /** HH:mm 校验归一（非法返回 null，调用处给默认） */
+    function normClock(v: unknown): string | null {
+      if (typeof v !== 'string') return null;
+      const m = v.trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+      return `${pad2(Number(m[1]))}:${m[2]}`;
+    }
+
+    /**
+     * 解析 planGenerate 回复：优先取第一个 ```json 代码块；
+     * 找不到则取 {…} 最大包裹，再退到裸数组 […] 包一层 subtasks
+     */
+    function parsePlanReply(reply: string): { summary: string; subs: PlanRow[] } | null {
+      let jsonText = '';
+      let summary = '';
+      const m = reply.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (m) {
+        jsonText = m[1].trim();
+        summary = reply.slice(0, m.index).trim();
+      } else {
+        const os = reply.indexOf('{');
+        const oe = reply.lastIndexOf('}');
+        if (os >= 0 && oe > os) {
+          jsonText = reply.slice(os, oe + 1);
+          summary = reply.slice(0, os).trim();
+        } else {
+          const as = reply.indexOf('[');
+          const ae = reply.lastIndexOf(']');
+          if (as >= 0 && ae > as) {
+            jsonText = `{"subtasks":${reply.slice(as, ae + 1)}}`;
+            summary = reply.slice(0, as).trim();
+          }
+        }
+      }
+      if (!jsonText) return null;
+      try {
+        const obj = JSON.parse(jsonText) as { subtasks?: unknown };
+        if (!obj || !Array.isArray(obj.subtasks)) return null;
+        const subs: PlanRow[] = [];
+        for (const raw of obj.subtasks as unknown[]) {
+          if (!raw || typeof raw !== 'object') continue;
+          const rec = raw as Record<string, unknown>;
+          const title = typeof rec.title === 'string' ? rec.title.trim() : '';
+          if (!title) continue;
+          subs.push({
+            title,
+            description: typeof rec.description === 'string' ? rec.description : '',
+            day: Math.max(1, Math.round(Number(rec.day) || 1)),
+            start: normClock(rec.start) ?? '10:00',
+            end: normClock(rec.end) ?? '11:00',
+          });
+        }
+        return subs.length > 0 ? { summary, subs } : null;
+      } catch {
+        return null;
+      }
+    }
+
+    /** 确认创建：新建项目（如有）→ 主任务 → 逐行子任务，完成后跳日程视图 */
+    async function persistPlan(): Promise<void> {
+      const rows = planRows.filter((r) => r.title.trim());
+      if (rows.length === 0 || planBusy) return;
+      planBusy = true;
+      try {
+        // 项目
+        let projectId = planForm.projectId || activeProjectId();
+        if (projectId === NEW_PROJECT_VALUE) {
+          const used = new Set(state.projects.map((p) => p.color));
+          const color =
+            PROJECT_PALETTE.find((c) => !used.has(c)) ?? PROJECT_PALETTE[state.projects.length % PROJECT_PALETTE.length];
+          const nowTs = Date.now();
+          const p: Project = {
+            id: `proj-${nowTs.toString(36)}`,
+            name: planForm.newProjectName.trim() || '新学习计划',
+            color,
+            createdAt: nowTs,
+            updatedAt: nowTs,
+          };
+          state.projects = await ctx.api.saveProject(p);
+          projectId = p.id;
+        }
+
+        // 主任务：dueDate = 最后一天 23:59（本地）
+        const maxDay = rows.reduce((mx, r) => Math.max(mx, r.day), 1);
+        const due = new Date();
+        due.setDate(due.getDate() + maxDay - 1);
+        due.setHours(23, 59, 0, 0);
+        const descText = planForm.desc.trim();
+        const main = blankTask('todo');
+        main.title = descText.length > 60 ? `${descText.slice(0, 60)}…` : descText;
+        main.description = [
+          descText,
+          `模式：${planForm.mode === 'fast' ? '快速学习（1 天内）' : '完整学习（2–5 天）'}`,
+          planForm.extra.trim() ? `补充：${planForm.extra.trim()}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
+        main.projectId = projectId;
+        main.dueDate = due.toISOString();
+        state.tasks = await ctx.api.saveTask(main);
+
+        // 子任务：scheduledStart/End 存本地 naive YYYY-MM-DDTHH:mm（日程视图 new Date() 按本地解析）
+        const today = new Date();
+        for (const r of rows) {
+          const sub = blankTask('todo');
+          sub.title = r.title.trim();
+          sub.description = r.description;
+          sub.parentId = main.id;
+          sub.projectId = projectId;
+          const d = new Date(today);
+          d.setDate(d.getDate() + r.day - 1);
+          const dk = dateKeyOf(d);
+          sub.scheduledStart = `${dk}T${r.start}`;
+          sub.scheduledEnd = `${dk}T${r.end}`;
+          sub.priority = 'medium';
+          state.tasks = await ctx.api.saveTask(sub);
+        }
+
+        closePlan();
+        setView('schedule');
+        void reload();
+      } finally {
+        planBusy = false;
       }
     }
 

@@ -1,0 +1,546 @@
+/* ============================================================
+   createChatPanel — 可复用对话面板样式(.kp- 作用域)
+   悬浮窗与 channel 页共用;依赖宿主页面提供 :root 设计令牌、
+   .hidden、.icon-btn、.btn-primary/.btn-ghost/.btn-danger。
+   ============================================================ */
+
+.kp-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.kp-root .hidden { display: none !important; }
+
+/* ============================================================
+   messages
+   ============================================================ */
+.kp-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kp-messages .msg {
+  max-width: 86%;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  line-height: 1.62;
+  font-size: 13px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  flex-shrink: 0;
+}
+.kp-messages .msg.user {
+  align-self: flex-end;
+  background: var(--bubble-user);
+  color: var(--bubble-user-fg);
+  border-bottom-right-radius: 4px;
+}
+.kp-messages .msg.agent {
+  align-self: flex-start;
+  background: var(--bubble-agent);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.kp-messages .msg .msg-img { max-width: 100%; border-radius: var(--r-sm); display: block; margin-bottom: 6px; cursor: zoom-in; }
+.kp-messages .msg .md-img {
+  max-width: 100%;
+  border-radius: var(--r-sm);
+  display: block;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: zoom-in;
+}
+.kp-messages .msg pre {
+  background: var(--code-bg);
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 6px 0;
+}
+.kp-messages .msg code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+.kp-messages .msg p { margin: 5px 0; }
+.kp-messages .msg ul, .kp-messages .msg ol { margin: 5px 0; padding-left: 18px; }
+.kp-messages .msg li { margin: 2px 0; }
+.kp-messages .msg strong { font-weight: 600; }
+.kp-messages .msg h1, .kp-messages .msg h2, .kp-messages .msg h3 { margin: 8px 0 4px; font-size: 13.5px; }
+
+/* links */
+.kp-messages .msg a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: pointer;
+  transition: text-decoration-color var(--t-fast);
+  word-break: break-all;
+}
+.kp-messages .msg a:hover { text-decoration-color: var(--accent); }
+.kp-messages .msg.user a { color: inherit; text-decoration-color: rgba(255, 255, 255, 0.6); }
+.kp-messages .msg.user a:hover { text-decoration-color: #fff; }
+
+/* streaming cursor */
+.kp-messages .cursor-blink::after { content: '▋'; animation: kp-blink 0.8s infinite; color: var(--accent); }
+.kp-messages .msg.user .cursor-blink::after { color: var(--bubble-user-fg); }
+@keyframes kp-blink { 50% { opacity: 0; } }
+
+/* loading placeholder */
+.kp-messages .msg.loading { display: flex; gap: 5px; align-items: center; padding: 13px 14px; }
+.kp-messages .msg.loading .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  animation: kp-dotPulse 1.2s ease-in-out infinite;
+}
+.kp-messages .msg.loading .dot:nth-child(2) { animation-delay: 0.2s; }
+.kp-messages .msg.loading .dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes kp-dotPulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+/* rolling tool status */
+.kp-messages .msg.tool {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  padding: 0 4px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+/* markdown tables */
+.kp-messages .table-wrap { overflow-x: auto; margin: 6px 0; }
+.kp-messages .md-table { border-collapse: collapse; font-size: 12px; min-width: 60%; }
+.kp-messages .md-table th, .kp-messages .md-table td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  line-height: 1.5;
+  vertical-align: top;
+}
+.kp-messages .md-table th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+.kp-messages .msg.user .md-table th { background: rgba(255, 255, 255, 0.15); }
+.kp-messages .msg.user .md-table th, .kp-messages .msg.user .md-table td { border-color: rgba(255, 255, 255, 0.3); }
+
+/* collapsible thinking box */
+.kp-messages .thought-box {
+  align-self: flex-start;
+  max-width: 92%;
+  width: fit-content;
+  min-width: 180px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  font-size: 12px;
+  color: var(--fg-2);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.kp-messages .thought-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  color: var(--muted);
+  transition: color var(--t-fast);
+}
+.kp-messages .thought-header::after {
+  content: '';
+  width: 6px; height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform var(--t-fast);
+  margin-left: auto;
+}
+.kp-messages .thought-box.expanded .thought-header::after { transform: rotate(-135deg); }
+.kp-messages .thought-header:hover { color: var(--fg); }
+.kp-messages .thought-body {
+  display: none;
+  padding: 8px 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  font-style: italic;
+  border-top: 1px dashed var(--border);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.kp-messages .thought-box.expanded .thought-body { display: block; }
+
+/* ============================================================
+   mode bar (紧凑菜单按钮行: [权限][预设][模型][…剩余空间…])
+   ============================================================ */
+.kp-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 0;
+  flex-shrink: 0;
+}
+.kp-mode-spacer { flex: 1; }
+
+/* 三个菜单按钮共用胶囊样式(权限按钮另有按模式的彩色标识)。
+   菜单系组件是跨宿主的功能组件而非主题皮肤:几何(字体/字号/尺寸/圆角)
+   一律写死具体值,不吃宿主 token,保证悬浮窗与 channel 页像素一致;颜色仍走 token。 */
+.kp-perm-mode, .kp-preset-mode, .kp-model-mode {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.kp-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg-2);
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.kp-menu-btn:hover { border-color: var(--border-strong); color: var(--fg); }
+.kp-menu-btn.disabled { opacity: 0.45; pointer-events: none; }
+.kp-perm-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.kp-perm-mode-btn[data-mode="auto"], .kp-popup-item[data-mode="auto"] { --kp-perm-color: #b57f1f; }
+.kp-perm-mode-btn[data-mode="plan"], .kp-popup-item[data-mode="plan"] { --kp-perm-color: var(--accent); }
+.kp-perm-mode-btn[data-mode="yolo"], .kp-popup-item[data-mode="yolo"] { --kp-perm-color: var(--danger); }
+.kp-perm-mode-btn[data-mode="default"], .kp-popup-item[data-mode="default"] { --kp-perm-color: var(--muted); }
+.kp-perm-mode-btn .kp-perm-dot, .kp-popup-item .kp-perm-dot { background: var(--kp-perm-color, var(--muted)); }
+.kp-perm-mode-btn[data-mode="yolo"], .kp-perm-mode-btn[data-mode="auto"], .kp-perm-mode-btn[data-mode="plan"] {
+  color: var(--kp-perm-color);
+}
+
+/* 通用弹出菜单:默认向上展开;上方空间不足时(.below)向下 */
+.kp-popup-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-pop);
+  z-index: 25;
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+}
+.kp-popup-menu.below {
+  bottom: auto;
+  top: calc(100% + 4px);
+}
+.kp-popup-header {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  padding: 4px 9px 2px;
+  white-space: nowrap;
+  user-select: none;
+}
+.kp-popup-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 2px;
+}
+.kp-popup-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.kp-popup-item:hover { background: var(--hover); color: var(--fg); }
+.kp-popup-item.active { background: var(--accent-tint); color: var(--kp-perm-color, var(--accent)); font-weight: 600; }
+
+/* ============================================================
+   attach preview (多图缩略图横排,每张带 ×)
+   ============================================================ */
+.kp-attach-preview { padding: 8px 12px 0; }
+.kp-attach-list { display: flex; gap: 8px; flex-wrap: wrap; width: fit-content; }
+.kp-attach-item { position: relative; }
+.kp-attach-item img { max-height: 72px; border-radius: var(--r-sm); border: 1px solid var(--border); display: block; cursor: zoom-in; }
+.kp-attach-remove {
+  position: absolute; top: -6px; right: -6px;
+  border: none; background: rgba(0, 0, 0, 0.6); color: #fff;
+  width: 18px; height: 18px; border-radius: 50%; cursor: pointer; font-size: 11px; line-height: 1;
+}
+
+/* 轻提示(附件超限等):输入区上方短暂浮出 */
+.kp-flash {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 76px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-pop);
+  padding: 5px 14px;
+  font-size: 12px;
+  color: var(--fg-2);
+  white-space: nowrap;
+  z-index: 30;
+}
+
+/* ============================================================
+   lightbox (消息图片/附件缩略图点击看大图)
+   ============================================================ */
+.kp-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  cursor: zoom-out;
+}
+.kp-lightbox img {
+  max-width: 92%;
+  max-height: 88%;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  cursor: default;
+}
+.kp-lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.kp-lightbox-close:hover { background: rgba(255, 255, 255, 0.28); }
+
+/* queued messages (stacked above the input while a turn is running) */
+.kp-queue-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px 0;
+}
+.kp-queue-bar .queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  padding: 5px 6px 5px 10px;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+.kp-queue-bar .queue-item .q-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kp-queue-bar .queue-item .q-label::before { content: '⏳ '; }
+.kp-queue-bar .queue-item .q-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.kp-queue-bar .queue-item button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.kp-queue-bar .queue-item button:hover { background: var(--hover); color: var(--fg); }
+
+/* quote preview (hanging above the input, like the attach card) */
+.kp-quote-preview {
+  margin: 8px 12px 0;
+  position: relative;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 7px 28px 7px 10px;
+}
+.kp-quote-text {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.kp-quote-text::before { content: '❝ '; color: var(--accent); }
+.kp-quote-remove {
+  position: absolute; top: 5px; right: 5px;
+  border: none; background: transparent; color: var(--muted);
+  width: 20px; height: 20px; border-radius: 50%; cursor: pointer; font-size: 12px; line-height: 1;
+}
+.kp-quote-remove:hover { background: var(--hover); color: var(--fg); }
+
+/* quote block inside a user bubble */
+.kp-messages .msg-quote {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: var(--r-sm);
+  padding: 5px 9px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.9;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ============================================================
+   input area
+   ============================================================ */
+.kp-input-area { padding: 8px 12px 12px; flex-shrink: 0; }
+.kp-input-shell {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 5px 5px 5px 2px;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.kp-input-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.kp-input {
+  flex: 1;
+  resize: none;
+  border: none;
+  background: transparent;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  max-height: 96px;
+  outline: none;
+}
+.kp-input::placeholder { color: var(--muted); }
+/* 焦点态的边框强调只保留在外层 .kp-input-shell:focus-within;
+   内层 textarea 不叠加自己的 outline(宿主全局 textarea:focus-visible 规则 specificity 更高,这里显式压住) */
+.kp-input:focus, .kp-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: none;
+}
+.kp-btn-send {
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: filter var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
+}
+.kp-btn-send svg {
+  width: 15px; height: 15px;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  transform: translateX(1px);
+}
+.kp-btn-send:hover { filter: brightness(1.1); }
+.kp-btn-send:active { transform: scale(0.9); }
+.kp-btn-send:disabled { opacity: 0.4; cursor: default; }
+
+/* ============================================================
+   permission bar
+   ============================================================ */
+.kp-permission-bar {
+  position: absolute;
+  left: 12px; right: 12px; bottom: 72px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  padding: 12px;
+  z-index: 20;
+}
+.kp-permission-text { font-size: 12.5px; margin-bottom: 10px; line-height: 1.55; color: var(--fg); word-break: break-all; }
+.kp-perm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ============================================================
+   context menu (消息右键 复制/引用;悬浮窗 session 列表也共用,
+   瞬态挂到 body,不套 .kp-root 作用域)
+   ============================================================ */
+.kp-ctx-menu {
+  position: fixed;
+  z-index: 100;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  min-width: 104px;
+}
+.kp-ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.kp-ctx-menu button:hover { background: var(--hover); }

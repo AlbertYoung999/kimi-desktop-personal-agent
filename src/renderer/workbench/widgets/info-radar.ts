@@ -128,6 +128,28 @@ textarea.wf-radar-input { font-family: var(--mono); font-size: 10.5px; line-heig
 }
 .wf-radar-savebtn:hover { box-shadow: 0 0 10px rgba(0,240,255,0.25); }
 
+/* sources list (settings panel) */
+.wf-radar-srclist {
+  display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px;
+  background: rgba(0,0,0,0.2); margin-bottom: 6px;
+}
+.wf-radar-srclist:empty { display: none; }
+.wf-radar-srcrow { display: flex; align-items: center; gap: 6px; }
+.wf-radar-srcurl {
+  flex: 1; min-width: 0; font-family: var(--mono); font-size: 10.5px; color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wf-radar-srcdel {
+  border: none; background: transparent; color: var(--muted); font-size: 12px;
+  width: 20px; height: 20px; border-radius: 5px; cursor: pointer; flex-shrink: 0;
+  transition: color 120ms var(--ease-in), background 120ms var(--ease-in);
+}
+.wf-radar-srcdel:hover { color: var(--error); background: rgba(255,68,68,0.1); }
+.wf-radar-srcadd { display: flex; gap: 6px; }
+.wf-radar-srcadd .wf-radar-input { flex: 1; min-width: 0; }
+.wf-radar-srcadd button { flex-shrink: 0; }
+
 /* feed cards */
 .wf-radar-card {
   background: var(--card); border: 1px solid var(--border); border-radius: 8px;
@@ -322,8 +344,12 @@ registerWidget({
             <input class="wf-radar-input" data-f="freq" type="number" min="5" step="1" value="${radar.frequencyMinutes}">
           </div>
           <div class="wf-radar-field">
-            <label>数据源（每行一个 URL — 支持 GitHub / arXiv / HN / RSS / Atom）</label>
-            <textarea class="wf-radar-input" data-f="sources" rows="4" spellcheck="false">${esc(radar.sources.join('\n'))}</textarea>
+            <label>数据源（支持 GitHub / arXiv / HN / RSS / Atom）</label>
+            <div class="wf-radar-srclist"></div>
+            <div class="wf-radar-srcadd">
+              <input class="wf-radar-input" data-f="newsrc" type="text" placeholder="新增源 URL，回车或点添加…" spellcheck="false">
+              <button class="wf-radar-cancelbtn" data-act="addsrc" type="button">添加</button>
+            </div>
           </div>
           <label class="wf-radar-enabledrow">
             <input data-f="enabled" type="checkbox" ${radar.enabled ? 'checked' : ''}> 启用定时抓取
@@ -337,23 +363,62 @@ registerWidget({
         if (e.target === overlay) closeSettings();
       });
       overlay.querySelector('.wf-radar-cancelbtn')!.addEventListener('click', closeSettings);
+
+      /* sources 列表:编辑副本随表单保存一起提交(表单是点保存才生效) */
+      const editSources = [...radar.sources];
+      const srcListEl = overlay.querySelector<HTMLElement>('.wf-radar-srclist')!;
+      const newSrcInput = overlay.querySelector<HTMLInputElement>('[data-f="newsrc"]')!;
+      const renderSrcList = (): void => {
+        srcListEl.innerHTML = editSources
+          .map(
+            (s, i) => `
+            <div class="wf-radar-srcrow">
+              <span class="wf-radar-srcurl" title="${esc(s)}">${esc(s)}</span>
+              <button class="wf-radar-srcdel" type="button" data-i="${i}" title="删除该源">×</button>
+            </div>`,
+          )
+          .join('');
+      };
+      renderSrcList();
+      srcListEl.addEventListener('click', (e) => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.wf-radar-srcdel');
+        if (!btn) return;
+        const url = editSources[Number(btn.dataset.i)];
+        if (!window.confirm(`删除后将不再追踪该源，已抓取的历史条目保留。确定删除？\n${url}`)) return;
+        editSources.splice(Number(btn.dataset.i), 1);
+        renderSrcList();
+      });
+      const addSource = (): void => {
+        const url = newSrcInput.value.trim();
+        if (!url) return;
+        if (!editSources.includes(url)) editSources.push(url);
+        newSrcInput.value = '';
+        renderSrcList();
+        newSrcInput.focus();
+      };
+      overlay.querySelector('[data-act="addsrc"]')!.addEventListener('click', addSource);
+      newSrcInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addSource();
+        }
+      });
+
       overlay.querySelector('.wf-radar-savebtn')!.addEventListener('click', () => {
         const val = (f: string): string =>
           (overlay.querySelector<HTMLInputElement>(`[data-f="${f}"]`)?.value ?? '').trim();
         const name = val('name') || radar.name;
         const icon = val('icon') || radar.icon;
         const freq = Math.max(5, Math.round(Number(val('freq')) || radar.frequencyMinutes));
-        const sources = val('sources')
-          .split('\n')
-          .map((s) => s.trim())
-          .filter(Boolean);
+        // 列表形态下清空是有意操作(逐行确认过),不再回退旧值
+        const sources = editSources.filter(Boolean);
         const enabled = overlay.querySelector<HTMLInputElement>('[data-f="enabled"]')!.checked;
         const next: Radar = {
           ...radar,
           name,
           icon,
           frequencyMinutes: freq,
-          sources: sources.length > 0 ? sources : radar.sources,
+          sources,
           enabled,
         };
         void ctx.api

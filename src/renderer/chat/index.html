@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="../shared/chat-panel.css" />
 </head>
 <body>
   <div id="app">
@@ -36,42 +37,7 @@
       </button>
     </header>
 
-    <div id="messages"></div>
-
-    <div id="mode-bar"></div>
-
-    <div id="attach-preview" class="hidden">
-      <img id="attach-img" alt="screenshot" />
-      <button id="attach-remove">×</button>
-    </div>
-
-    <div id="queue-bar" class="hidden"></div>
-
-    <div id="quote-preview" class="hidden">
-      <div id="quote-text"></div>
-      <button id="quote-remove">×</button>
-    </div>
-
-    <div id="input-area">
-      <div id="input-shell">
-        <button id="btn-capture" class="icon-btn" title="截图">
-          <svg viewBox="0 0 24 24"><path d="M7 3v12a2 2 0 0 0 2 2h12"/><path d="M3 7h12a2 2 0 0 1 2 2v12"/></svg>
-        </button>
-        <textarea id="input" rows="1" placeholder="问点什么…"></textarea>
-        <button id="btn-send" title="发送">
-          <svg viewBox="0 0 24 24"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.8 18-3.7-7.5L3 9.8z"/></svg>
-        </button>
-      </div>
-    </div>
-
-    <div id="permission-bar" class="hidden">
-      <div id="permission-text"></div>
-      <div class="perm-actions">
-        <button id="perm-allow" class="btn-primary">允许</button>
-        <button id="perm-always" class="btn-ghost">本会话允许</button>
-        <button id="perm-deny" class="btn-danger">拒绝</button>
-      </div>
-    </div>
+    <div id="chat-panel"></div>
 
     <div id="panel-sessions" class="panel hidden">
       <div class="panel-title">会话 <button class="panel-close icon-btn"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
