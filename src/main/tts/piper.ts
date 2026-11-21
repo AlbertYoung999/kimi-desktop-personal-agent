@@ -139,24 +139,42 @@ export function piperStatus(): { binary: boolean; voices: string[] } {
 
 let current: ChildProcess | null = null;
 
+/** 合成到 wav 文件(ensureBinary/ensureVoice 已完成);piperSpeak/piperSynth 共用 */
+function synthToFile(text: string, model: string, wav: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    current = execFile(venvPython(), ['-m', 'piper', '--model', model, '--output-file', wav, '--', text], (err) => {
+      current = null;
+      if (err) reject(new Error(`piper failed: ${String(err).slice(0, 200)}`));
+      else resolve();
+    });
+  });
+}
+
 export async function piperSpeak(text: string, voiceId: string): Promise<void> {
   await ensureBinary();
   const model = await ensureVoice(voiceId);
   const wav = path.join(ttsDir(), `out-${Date.now()}.wav`);
   try {
-    await new Promise<void>((resolve, reject) => {
-      current = execFile(venvPython(), ['-m', 'piper', '--model', model, '--output-file', wav, '--', text], (err) => {
-        current = null;
-        if (err) reject(new Error(`piper failed: ${String(err).slice(0, 200)}`));
-        else resolve();
-      });
-    });
+    await synthToFile(text, model, wav);
     await new Promise<void>((resolve) => {
       current = execFile('afplay', [wav], () => {
         current = null;
         resolve();
       });
     });
+  } finally {
+    fs.rm(wav, { force: true }, () => {});
+  }
+}
+
+/** 合成 wav 返回 Buffer(不播放;RemoteBridge /api/tts 用),临时文件用完即删 */
+export async function piperSynth(text: string, voiceId: string): Promise<Buffer> {
+  await ensureBinary();
+  const model = await ensureVoice(voiceId);
+  const wav = path.join(ttsDir(), `out-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.wav`);
+  try {
+    await synthToFile(text, model, wav);
+    return fs.readFileSync(wav);
   } finally {
     fs.rm(wav, { force: true }, () => {});
   }

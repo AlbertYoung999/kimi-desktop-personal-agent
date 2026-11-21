@@ -6,6 +6,31 @@ All notable changes to Kimi Desktop Personal Agent will be documented in this fi
 
 各版本详细开发记录见 `changelogs/changelog-v{版本}-{版本开始日期}.md`(每个子版本一份,推 GitHub 时更新)。
 
+## [0.8.0] - 2026-11-22
+
+版本主题:**移动远程控制**——手机(及后续手表)作为与桌面平权的新 channel,局域网/远程访问桌面 session。详细记录见 `changelogs/changelog-v0.8.0-20261121.md`。
+
+### Added
+
+- **RemoteBridge(主进程)**:局域网 HTTP+HTTPS 双栈服务(openssl 本地 CA,/ca.pem 免 token 下载);配对码(6 位/5 分钟/一次性)→ 长期 token(sha256 存储、可撤销、限流);会话树/open-session/prompt/cancel/权限审批/配置 API;sse 双通道(会话+全局,chunk/turn-done/permission/配置回传);`/api/tts`(piper 合成 wav);审计落 signals;ACP 铁律照守(busy 409/held 423)
+- **手机网页客户端(PWA)**:talking-to-the-moon **原版视觉移植**——Three.js 月相渲染(天文算法,vendor 本地)、星空/月晕/12 张背景、result-card、TTS karaoke;**双界面模式**:月之暗面 ⇄ 经典对话(菜单切换、状态共享);Web Speech 语音(可编辑确认弹窗)+ 微信式输入(空显语音钮/有字显发送钮/按住说话/上滑取消);HTTPS 指引卡(iOS 证书安装流程)
+- **对话面板工厂后端抽象**:`ChatBackend` 接口 + Electron/Remote 双适配器——手机经典对话与桌面悬浮窗/channel 页**同一份工厂代码**,获得全量能力:per-session 队列(编辑/直接发送/取消)、复制/引用、权限/预设/模型(K3.1 系)/思考深度、多图(≤10)、草稿、lightbox
+- **移动访问设置区块**:开关、局域网地址、配对码倒计时、已配对设备管理
+
+### Fixed(踩坑记录)
+
+- **onSwitchSession 无限回环**:工厂加载完回告宿主 → 宿主 setSession → 工厂再回告,每秒上千请求(实测 20s 内 2.1 万次),手机发烫、历史渲染不出;修复 = 宿主回显守卫
+- **重同步风暴**:流式 session 每 2s 写盘触发 tree-changed,客户端每轮全量 resync(open-session + config 三连);修复 = tree-changed 只刷树、live 禁止 open-session、resync 500ms 合并、stale 重试封顶退避
+- **openSession 全局防抖令牌**:任何加载令全部在飞加载作废(多消费方互相误杀);修复 = per-sessionId 令牌
+- **模型列表陈旧**:kimi 升级后缓存不自愈(新模型只在建 session 时刷新);修复 = 缓存与内置列表并集
+- **AskUserQuestion 手机端不可用**:远程权限只有布尔应答;已在 v0.7.0 修主链路,本轮手机端同步获得选项按钮
+
+### 调研资产(入 PRD)
+
+- talking-to-the-moon:语音确认弹窗/文件产物推送/iOS 音频经验可借鉴;零鉴权/不流式/单 session 不可借鉴
+- dsh-mobile:配对 UX、远程通道实测(cloudflare **命名隧道**最稳、quick tunnel 不支持 SSE、Tailscale Funnel ≠ tailnet)、iOS PWA 推送(18.4+,锁屏可收、文案脱敏)
+- SenseVoice 实测:纯中文近完美、RTF≈0.1,但英文技术词短板(npm test→NTM chest、yolo 丢失)——定级离线兜底;打包 sherpa-onnx int8;模型走 modelscope(国内 80s vs GitHub 25min+)
+
 ## [0.7.0] - 2026-09-28
 
 版本主题:**Channel 模式 + 多 Session 协作**——session 管理从"悬浮窗平铺"进化为"slack 式频道 + 常驻 agent 团队 + group 多智能体协作"。详细开发记录见 `changelogs/changelog-v0.7.0-20260920.md`。

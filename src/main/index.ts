@@ -19,6 +19,7 @@ import { readSessionConfig, writeSessionConfig } from './session-config.js';
 import { GroupOrchestrator } from './group-orchestrator.js';
 import { createWorktree, discardWorktree, getDiff, listWorktrees, mergeWorktree } from './worktree-manager.js';
 import { TerminalManager } from './terminal-manager.js';
+import { RemoteBridge } from './remote-bridge.js';
 import { createTray } from './tray.js';
 import { sampleSysStats } from './sysstats.js';
 import { speak, stopSpeaking, listTtsVoices, setTtsVoice, previewVoice, setTtsProvider, setTtsPiperVoice } from './tts.js';
@@ -91,6 +92,7 @@ const sessionScanner = new SessionScanner({
   onChanged: () => {
     const wc = getWorkbenchWindow()?.webContents;
     if (wc && !wc.isDestroyed()) wc.send(IPC.evChChanged);
+    remoteBridge.notifyTreeChanged(); // 手机端全局 SSE 通道同步
   },
 });
 
@@ -115,6 +117,13 @@ const terminalManager = new TerminalManager({
   },
   hold: (sid) => acpManager.holdSession(sid),
   release: (sid) => acpManager.releaseSession(sid),
+});
+
+// 移动远程控制 (prd/PRD-mobile-remote.md):手机网页 LAN 访问,REST + SSE
+const remoteBridge = new RemoteBridge({
+  acp: acpManager,
+  scan: () => sessionScanner.scan(),
+  staticDir: path.join(app.getAppPath(), 'dist', 'renderer', 'remote'),
 });
 
 // ---------- sys stats polling (home page left rail) ----------
@@ -532,6 +541,18 @@ function registerIpc(): void {
   ipcMain.handle(IPC.termOpenExternal, (_e, sid: string) => terminalManager.openExternalTerminal(sid));
   ipcMain.handle(IPC.termRelease, (_e, sid: string) => acpManager.releaseSession(sid));
   ipcMain.handle(IPC.termIsHeld, (_e, sid: string) => acpManager.isHeld(sid));
+
+  // ---- 移动远程控制 (prd/PRD-mobile-remote.md,管理面) ----
+  ipcMain.handle(IPC.rmGetInfo, () => remoteBridge.getInfo());
+  ipcMain.handle(IPC.rmSetEnabled, (_e, enabled: boolean) => {
+    saveSettings({ remoteEnabled: enabled });
+    if (enabled) void remoteBridge.start();
+    else remoteBridge.stop();
+    return remoteBridge.getInfo();
+  });
+  ipcMain.handle(IPC.rmRegenerateCode, () => remoteBridge.regeneratePairCode());
+  ipcMain.handle(IPC.rmListDevices, () => remoteBridge.listDevices());
+  ipcMain.handle(IPC.rmRevokeDevice, (_e, id: string) => remoteBridge.revokeDevice(id));
   ipcMain.on(IPC.ballMove, (_e, pos: { x: number; y: number }) => moveBallTo(pos.x, pos.y));
   ipcMain.on(IPC.setChatPinned, (_e, pinned: boolean) => setChatPinned(pinned));
   ipcMain.handle(IPC.getChatPinned, () => getChatPinned());
@@ -570,6 +591,7 @@ if (!gotLock) {
       if (wc && !wc.isDestroyed()) wc.send(IPC.evChChanged);
     }
     sessionScanner.start(); // channel: fs.watch ~/.kimi-code/sessions(debounce 2s → ch:changed)
+    void remoteBridge.start(); // 移动远程控制:LAN HTTP+SSE(默认开,未配对 401)
     startBackupSchedule();
     getDb(); // 打开 jarvis.db
     migrateFromJson(); // 一次性从 JSON 迁移（幂等）
@@ -653,6 +675,7 @@ if (!gotLock) {
     stopRadarSchedulers();
     sessionScanner.stop();
     terminalManager.dispose(); // 杀掉所有 pty / kimi vis 子进程
+    remoteBridge.stop();
     disposeWindows();
     void acpManager.dispose();
   });

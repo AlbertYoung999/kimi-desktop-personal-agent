@@ -1,90 +1,9 @@
 /// <reference path="../api.d.ts" />
 import type { OpenSessionResult, PresetMode, PromptImage, SessionMeta } from '../../shared/types';
+import type { ChatBackend, ChatHost } from './chat-backend';
+import { createElectronBackend, createElectronHost } from './backend-electron';
 
-// ---------- tiny markdown renderer (escaped, code/bold/italic/lists) ----------
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function mdToHtml(md: string): string {
-  const blocks: string[] = [];
-  // extract fenced code blocks first, replaced by \x00N\x00 sentinels (escapeHtml leaves \x00 intact)
-  let text = md.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => {
-    blocks.push(`<pre><code>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`);
-    return `\x00${blocks.length - 1}\x00`;
-  });
-  text = escapeHtml(text);
-  // images first, then markdown links (negative lookbehind so ![...]( ) isn't eaten), then bare URLs
-  text = text
-    .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img class="md-img" src="$2" alt="$1" loading="lazy" />')
-    .replace(/(?<!!)\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" data-link>$1</a>')
-    .replace(/(?<!href=")(?<!src=")(https?:\/\/[^\s<)。，、；：！？」』]+)/g, (m) => {
-      const trailing = m.match(/[.,;:!?]+$/)?.[0] ?? '';
-      const url = m.slice(0, m.length - trailing.length);
-      return `<a href="${url}" data-link>${url}</a>${trailing}`;
-    });
-  text = text
-    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-  const lines = text.split('\n');
-  const out: string[] = [];
-  let list: 'ul' | 'ol' | null = null;
-  const closeList = () => {
-    if (list) { out.push(`</${list}>`); list = null; }
-  };
-  const splitRow = (row: string): string[] =>
-    row.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
-  let i = 0;
-  while (i < lines.length) {
-    const trimmed = lines[i].trim();
-    // markdown table: header row + |---| separator row
-    if (trimmed.startsWith('|') && i + 1 < lines.length && /^\|[\s:|-]+\|?$/.test(lines[i + 1].trim())) {
-      closeList();
-      const header = splitRow(trimmed);
-      i += 2; // skip header + separator
-      const body: string[][] = [];
-      while (i < lines.length && lines[i].trim().startsWith('|')) {
-        body.push(splitRow(lines[i].trim()));
-        i++;
-      }
-      out.push(
-        '<div class="table-wrap"><table class="md-table"><thead><tr>' +
-          header.map((c) => `<th>${c}</th>`).join('') +
-          '</tr></thead><tbody>' +
-          body.map((r) => '<tr>' + r.map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') +
-          '</tbody></table></div>',
-      );
-      continue;
-    }
-    i++;
-    const sentinel = trimmed.match(/^\x00(\d+)\x00$/);
-    if (sentinel) {
-      closeList();
-      out.push(blocks[Number(sentinel[1])]);
-      continue;
-    }
-    const ul = trimmed.match(/^[-*•]\s+(.*)$/);
-    const ol = trimmed.match(/^\d+[.、]\s+(.*)$/);
-    if (ul) {
-      if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
-      out.push(`<li>${ul[1]}</li>`);
-    } else if (ol) {
-      if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
-      out.push(`<li>${ol[1]}</li>`);
-    } else if (/^#{1,4}\s+/.test(trimmed)) {
-      closeList();
-      out.push(`<p><strong>${trimmed.replace(/^#{1,4}\s+/, '')}</strong></p>`);
-    } else if (trimmed === '') {
-      closeList();
-    } else {
-      closeList();
-      out.push(`<p>${trimmed}</p>`);
-    }
-  }
-  closeList();
-  return out.join('');
-}
+import { escapeHtml, mdToHtml } from './md';
 
 // ---------- public interface ----------
 
@@ -100,6 +19,19 @@ export interface ChatPanelOpts {
    * 不提供时保持 loadSession 默认路径(悬浮窗行为不变)。
    */
   openSession?: (sid: string) => Promise<OpenSessionResult>;
+  /**
+   * 对话后端(会话/流式/权限/模式/模型/思考)。缺省 = Electron 桌面端
+   * (backend-electron.ts,走 window.kimi);远程端(手机网页)传 HTTP/SSE 适配器。
+   */
+  backend?: ChatBackend;
+  /**
+   * 宿主专属能力(截图/外链/球状态/TTS 等),全部可选,缺省时对应 UI 隐藏或 no-op。
+   * 缺省规则:未提供自定义 backend 时用 Electron 默认 host;提供了自定义 backend
+   * 而未提供 host 时为空对象(即远程端默认无桌面能力)。
+   */
+  host?: ChatHost;
+  /** 图片选择入口(远程宿主的文件选择);提供时输入区显示 📎 按钮 */
+  imagePicker?: () => Promise<PromptImage[]>;
 }
 
 export interface ChatPanelHandle {
@@ -108,6 +40,10 @@ export interface ChatPanelHandle {
   newSession(): Promise<void>;
   /** 宿主编辑预设模式后调用,重新拉取并刷新模式 chips */
   reloadModes(): Promise<void>;
+  /** 设置输入框文本(远程宿主的语音转写等场景) */
+  setInputText(text: string): void;
+  /** 等价点击发送按钮(空文本+无附件不发送;streaming 中则入队) */
+  sendNow(): void;
   destroy(): void;
 }
 
@@ -150,6 +86,9 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
           <button class="kp-btn-capture icon-btn" title="截图">
             <svg viewBox="0 0 24 24"><path d="M7 3v12a2 2 0 0 0 2 2h12"/><path d="M3 7h12a2 2 0 0 1 2 2v12"/></svg>
           </button>
+          <button class="kp-btn-attach icon-btn hidden" title="添加图片">
+            <svg viewBox="0 0 24 24"><path d="M21 11.5l-8.8 8.8a5.2 5.2 0 0 1-7.4-7.4l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.7 1.7 0 0 1-2.5-2.5l8.2-8.2"/></svg>
+          </button>
           <textarea class="kp-input" rows="1" placeholder="问点什么…"></textarea>
           <button class="kp-btn-send" title="发送">
             <svg viewBox="0 0 24 24"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.8 18-3.7-7.5L3 9.8z"/></svg>
@@ -167,6 +106,23 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   const messagesEl = $('.kp-messages');
   const inputEl = $('.kp-input') as unknown as HTMLTextAreaElement;
   const sendBtn = $('.kp-btn-send') as unknown as HTMLButtonElement;
+
+  // ---------- backend / host(可插拔;缺省 Electron 桌面端) ----------
+  const backend: ChatBackend = opts.backend ?? createElectronBackend();
+  const host: ChatHost = opts.host ?? (opts.backend ? {} : createElectronHost());
+
+  // 截图按钮:宿主无 captureRegion 能力(如纯网页)时隐藏
+  if (!host.captureRegion) $('.kp-btn-capture').classList.add('hidden');
+  // 📎 图片选择按钮:宿主提供 imagePicker(远程文件选择)时显示
+  if (opts.imagePicker) {
+    const attachBtn = $('.kp-btn-attach') as unknown as HTMLButtonElement;
+    attachBtn.classList.remove('hidden');
+    attachBtn.onclick = async () => {
+      const imgs = await opts.imagePicker!();
+      for (const img of imgs) addAttach(img);
+      inputEl.focus();
+    };
+  }
 
   // ---------- state ----------
   let currentSession: SessionMeta | null = null;
@@ -205,7 +161,11 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     if (a) {
       e.preventDefault();
       const href = a.getAttribute('href');
-      if (href) window.kimi.openExternal(href);
+      if (href) {
+        // 宿主未提供 openExternal(纯网页)时回退浏览器默认行为
+        if (host.openExternal) host.openExternal(href);
+        else window.open(href, '_blank');
+      }
       return;
     }
     const img = (e.target as HTMLElement).closest('img.md-img, img.msg-img') as HTMLImageElement | null;
@@ -379,7 +339,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     loadingEl = null;
   }
 
-  window.kimi.onChunk((e) => {
+  backend.onChunk((e) => {
     if (destroyed || !currentSession || e.sessionId !== currentSession.sessionId) return;
     removeLoading();
     if (e.kind === 'user') {
@@ -435,7 +395,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     scrollToBottom();
   }
 
-  window.kimi.onToolCall((e) => {
+  backend.onToolCall((e) => {
     if (destroyed || !currentSession || e.sessionId !== currentSession.sessionId) return;
     removeLoading();
     const prev = toolStates.get(e.toolCallId) ?? { title: '', status: '' };
@@ -447,20 +407,20 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
 
   // ---------- TTS 播报（悬浮窗普通会话；主会话由 workbench voice.ts 统一播报） ----------
   async function speakReply(sessionId: string, text: string): Promise<void> {
-    if (!text) return;
+    if (!text || !host.getSettings || !host.ttsSpeak) return; // 宿主无 TTS 能力则跳过
     try {
-      const s = await window.kimi.getSettings();
+      const s = await host.getSettings();
       if (s.ttsEnabled === false || s.ttsEnabledChat === false) return;
       // 主会话不在这里播报，避免和 voice.ts 双重播报
       if (s.mainSessionId && sessionId === s.mainSessionId) return;
       const lang = /[一-鿿]/.test(text) ? 'zh' : 'en';
-      await window.kimi.ttsSpeak(text, lang).catch(() => undefined);
+      await host.ttsSpeak(text, lang).catch(() => undefined);
     } catch {
       // 设置读取失败则不播报
     }
   }
 
-  window.kimi.onTurnDone((e) => {
+  backend.onTurnDone((e) => {
     if (destroyed || !currentSession || e.sessionId !== currentSession.sessionId) return;
     if (directSendCancelPending) {
       directSendCancelPending = false;
@@ -474,7 +434,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     currentAgentEl = null;
     currentThoughtBox = null;
     currentThoughtBody = null;
-    window.kimi.setBallState('idle');
+    host.setBallState?.('idle');
     updateSendBtn();
     // TTS 播报本轮回复全文（门控：总开关 + 悬浮窗开关；主会话跳过）
     const replyText = currentAgentText.trim();
@@ -497,7 +457,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
 
   // ---------- permission ----------
   // 只响应当前 session 的权限请求(channel 页多 panel 并存时互不串扰;悬浮窗单 panel 不受影响)
-  window.kimi.onPermission((e) => {
+  backend.onPermission((e) => {
     if (destroyed) return;
     const sid = currentSession?.sessionId ?? opts.getSessionId();
     if (e.sessionId && sid && e.sessionId !== sid) return;
@@ -533,7 +493,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
 
   function resolvePermission(approved: boolean, remember: boolean, optionId?: string) {
     if (!pendingPermissionId) return;
-    window.kimi.respondPermission(pendingPermissionId, approved, remember, currentSession?.sessionId ?? '', optionId);
+    backend.respondPermission(pendingPermissionId, approved, remember, currentSession?.sessionId ?? '', optionId);
     pendingPermissionId = null;
     $('.kp-permission-bar').classList.add('hidden');
   }
@@ -547,7 +507,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
       await setSession(bound);
       if (currentSession) return currentSession;
     }
-    currentSession = await window.kimi.newSession();
+    currentSession = (await backend.newSession()) as SessionMeta;
     opts.onSwitchSession?.(currentSession.sessionId);
     void refreshPermMode();
     void refreshModel();
@@ -639,7 +599,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     if (streaming && currentSession) {
       directSendCancelPending = true; // 先置位再 cancel,防 turn-done 抢先到达
       try {
-        await window.kimi.cancel(currentSession.sessionId);
+        await backend.cancel(currentSession.sessionId);
       } catch {
         // 取消失效(turn 可能刚好结束)也继续发;flag 由下一个 turn-done 清掉
       }
@@ -649,7 +609,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
 
   async function doSend(msg: QueuedMessage) {
     const session = await ensureSession();
-    window.kimi.ttsStop(); // 发送新消息打断上一轮播报
+    host.ttsStop?.(); // 发送新消息打断上一轮播报
     addMessage('user', msg.text, msg.images, msg.quote);
     lastSentText = msg.text; // 主进程回投的 kind:'user' chunk 据此去重
     scrollToBottom(true); // user's own message always snaps to bottom
@@ -661,18 +621,18 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     currentThoughtBody = null;
     toolStates.clear();
     toolLineEl = null;
-    window.kimi.setBallState('thinking');
+    host.setBallState?.('thinking');
     showLoading();
     const promptText = msg.quote ? `> ${msg.quote.split('\n').join('\n> ')}\n\n${msg.text}` : msg.text;
     try {
-      await window.kimi.prompt(session.sessionId, promptText, activeModeId, msg.images.length > 0 ? msg.images : null);
+      await backend.prompt(session.sessionId, promptText, activeModeId, msg.images.length > 0 ? msg.images : null);
     } catch (err) {
       removeLoading();
       lastSentText = null; // 发送失败没有回投，清掉去重标记
       addMessage('agent', `⚠ 出错了：${String(err)}`);
       streaming = false;
       updateSendBtn();
-      window.kimi.setBallState('idle');
+      host.setBallState?.('idle');
     }
   }
 
@@ -693,7 +653,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   }
 
   function stopStreaming() {
-    if (currentSession) void window.kimi.cancel(currentSession.sessionId);
+    if (currentSession) void backend.cancel(currentSession.sessionId);
   }
 
   sendBtn.onclick = () => (streaming ? stopStreaming() : send());
@@ -779,11 +739,15 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     $('.kp-quote-preview').classList.add('hidden');
   }
   ($('.kp-quote-remove') as unknown as HTMLButtonElement).onclick = clearQuote;
-  ($('.kp-btn-capture') as unknown as HTMLButtonElement).onclick = async () => {
-    const img = await window.kimi.captureRegion();
-    if (img) addAttach(img);
-  };
-  window.kimi.onImagePasted((img) => {
+  // 截图按钮:宿主提供 captureRegion(桌面)时才接线(无能力时按钮已隐藏)
+  if (host.captureRegion) {
+    ($('.kp-btn-capture') as unknown as HTMLButtonElement).onclick = async () => {
+      const img = await host.captureRegion!();
+      if (img) addAttach(img);
+    };
+  }
+  // 系统级截图粘贴事件(桌面专属;网页走下方 document paste)
+  host.onImagePasted?.((img) => {
     if (destroyed) return;
     addAttach(img); // 截图工具路径:追加,不替换
     inputEl.focus();
@@ -934,7 +898,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
 
   async function reloadModes(): Promise<void> {
     try {
-      modes = await window.kimi.listModes();
+      modes = (await backend.listModes()) as PresetMode[];
     } catch {
       // 拉取失败保留现有快照(菜单打开前的实时刷新也走这里)
     }
@@ -998,7 +962,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     if (mode === 'yolo' && permMode !== 'yolo') {
       if (!window.confirm('该会话将不再询问任何权限，agent 可自动执行所有操作')) return;
     }
-    await window.kimi.ch.setSessionMode(sid, mode);
+    await backend.setSessionMode(sid, mode);
     permMode = mode;
     permModeSource = 'session';
     renderPermMode();
@@ -1012,7 +976,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
       return;
     }
     try {
-      const r = await window.kimi.ch.getSessionMode(sid);
+      const r = await backend.getSessionMode(sid);
       if (boundSid() !== sid || destroyed) return; // 等待期间已切走
       permMode = normalizePermMode(r.mode);
       permModeSource = r.source;
@@ -1024,7 +988,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   }
 
   // 终端 TUI /yolo 等外部切换的同步事件(按 sessionId 过滤)
-  window.kimi.onSessionMode((p) => {
+  backend.onSessionMode((p) => {
     if (destroyed) return;
     const sid = boundSid();
     if (!sid || p.sessionId !== sid) return;
@@ -1105,7 +1069,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   async function setModel(value: string): Promise<void> {
     const sid = boundSid();
     if (!sid) return;
-    await window.kimi.ch.setSessionModel(sid, value || null);
+    await backend.setSessionModel(sid, value || null);
     await refreshModel(); // 回读生效值(跟随默认时拿到默认模型名)
   }
 
@@ -1117,7 +1081,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
       return;
     }
     try {
-      const r = await window.kimi.ch.getSessionModel(sid);
+      const r = await backend.getSessionModel(sid);
       if (boundSid() !== sid || destroyed) return; // 等待期间已切走
       sessionModel = r.model;
       modelSource = r.source;
@@ -1130,7 +1094,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
 
   async function refreshModelOptions(): Promise<void> {
     try {
-      modelOptions = await window.kimi.ch.modelOptions();
+      modelOptions = await backend.modelOptions();
     } catch {
       modelOptions = [];
     }
@@ -1138,7 +1102,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   }
 
   // 外部(终端 TUI 等)切换模型的同步事件(按 sessionId 过滤)
-  window.kimi.onSessionModel((p) => {
+  backend.onSessionModel((p) => {
     if (destroyed) return;
     const sid = boundSid();
     if (!sid || p.sessionId !== sid) return;
@@ -1159,7 +1123,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   async function setThinking(value: string): Promise<void> {
     const sid = boundSid();
     if (!sid) return;
-    await window.kimi.ch.setSessionThinking(sid, (value || null) as 'low' | 'high' | 'max' | null);
+    await backend.setSessionThinking(sid, (value || null) as 'low' | 'high' | 'max' | null);
     await refreshThinking(); // 回读生效值(跟随全局时拿到全局值)
   }
 
@@ -1170,7 +1134,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
       return;
     }
     try {
-      const r = await window.kimi.ch.getSessionThinking(sid);
+      const r = await backend.getSessionThinking(sid);
       if (boundSid() !== sid || destroyed) return; // 等待期间已切走
       sessionThinking = r.thinking;
       thinkingSource = r.source;
@@ -1182,7 +1146,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   }
 
   // 外部切换思考深度的同步事件(按 sessionId 过滤)
-  window.kimi.onSessionThinking((p) => {
+  backend.onSessionThinking((p) => {
     if (destroyed) return;
     const sid = boundSid();
     if (!sid || p.sessionId !== sid) return;
@@ -1210,14 +1174,18 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
 
   // ---------- session switching ----------
   async function setSession(sessionId: string): Promise<void> {
-    window.kimi.ttsStop(); // 切换会话打断播报
+    host.ttsStop?.(); // 切换会话打断播报
     saveDraft(); // 先把当前输入区存入旧 session 的草稿
     messagesEl.innerHTML = '';
     if (opts.openSession) {
       await setSessionViaOpenSession(sessionId);
       return;
     }
-    const { meta, history, live } = await window.kimi.loadSession(sessionId);
+    const { meta, history, live } = (await backend.loadSession(sessionId)) as {
+      meta: SessionMeta;
+      history: { role: 'user' | 'agent'; text: string }[];
+      live?: boolean;
+    };
     if (destroyed) return;
     currentSession = meta;
     directSendCancelPending = false;
@@ -1232,7 +1200,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
       hint.className = 'msg tool';
       hint.textContent = '⏵ 任务正在执行中，输出将实时显示…';
       messagesEl.appendChild(hint);
-      window.kimi.setBallState('thinking');
+      host.setBallState?.('thinking');
     }
     // streaming 跟随被切到 session 的忙闲(per-session 队列的前提:切到空闲 session 必须可直发)
     streaming = !!live;
@@ -1275,7 +1243,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
         currentAgentEl = addMessage('agent', bufferedText);
         currentAgentEl.classList.add('cursor-blink');
       }
-      window.kimi.setBallState('thinking');
+      host.setBallState?.('thinking');
     }
     streaming = result.mode === 'live';
     updateSendBtn();
@@ -1289,10 +1257,10 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   }
 
   async function newSession(): Promise<void> {
-    window.kimi.ttsStop(); // 新会话打断播报
+    host.ttsStop?.(); // 新会话打断播报
     saveDraft(); // 旧 session 草稿先存
     messagesEl.innerHTML = '';
-    currentSession = await window.kimi.newSession();
+    currentSession = (await backend.newSession()) as SessionMeta;
     directSendCancelPending = false;
     restoreDraft(currentSession.sessionId); // 新会话无草稿 → 清空输入区
     streaming = false;
@@ -1306,8 +1274,8 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     inputEl.focus();
   }
 
-  // 悬浮窗打开时聚焦输入框(仅悬浮窗会收到该事件;channel 页无害)
-  window.kimi.onOpenChat(() => {
+  // 悬浮窗打开时聚焦输入框(仅悬浮窗宿主提供该事件;其他宿主无此概念)
+  host.onOpenChat?.(() => {
     if (!destroyed) inputEl.focus();
   });
 
@@ -1322,6 +1290,14 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     setSession,
     newSession,
     reloadModes,
+    setInputText(text: string) {
+      inputEl.value = text;
+      autoGrow();
+      inputEl.focus();
+    },
+    sendNow() {
+      send(); // 等价点击发送按钮(内部已处理空内容与 streaming 入队)
+    },
     destroy() {
       destroyed = true;
       window.clearTimeout(flashTimer);

@@ -50,6 +50,12 @@ function injectStyle(): void {
       border: 1px solid var(--glass-border); border-radius: 12px; padding: 14px 16px;
     }
     .${P}-hint { font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin-top: 8px; letter-spacing: 0.5px; }
+    .${P}-paircode { font-family: var(--mono); font-size: 34px; letter-spacing: 10px; color: var(--neon); text-shadow: 0 0 16px rgba(0, 240, 255, 0.45); padding: 6px 0 2px; }
+    .${P}-addr { font-family: var(--mono); font-size: 12px; color: var(--fg); letter-spacing: 0.5px; }
+    .${P}-dev { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--glass-border); }
+    .${P}-dev:first-of-type { border-top: none; }
+    .${P}-dev-name { font-family: var(--mono); font-size: 12px; color: var(--fg); flex: 1; }
+    .${P}-dev-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); }
 
     .${P}-editor {
       width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
@@ -151,6 +157,7 @@ export function initAgentsPage(): void {
     { id: 'agent', label: 'AGENT 设定' },
     { id: 'resident', label: '常驻 Agent' },
     { id: 'orchestration', label: '编排优先模式' },
+    { id: 'remote', label: '移动访问' },
     { id: 'memory', label: '长期记忆' },
     { id: 'voice', label: '声音' },
     { id: 'tools', label: '工具' },
@@ -469,6 +476,143 @@ export function initAgentsPage(): void {
     orchTimer = setTimeout(orchFlush, 1000);
   });
   orchEditor.addEventListener('blur', orchFlush);
+
+  // ---------- 1.5 移动访问(RemoteBridge, prd/PRD-mobile-remote.md) ----------
+  const remotePanel = section('remote', '移动访问');
+  {
+    type RmInfo = Awaited<ReturnType<typeof window.kimi.rm.getInfo>>;
+    let rmInfo: RmInfo | null = null;
+    let rmCountdown: ReturnType<typeof setInterval> | null = null;
+
+    // 开关行
+    const toggleRow = document.createElement('div');
+    toggleRow.className = `${P}-row`;
+    const toggleName = document.createElement('span');
+    toggleName.className = `${P}-tool-name`;
+    toggleName.textContent = '启用移动访问';
+    const toggleDesc = document.createElement('span');
+    toggleDesc.className = `${P}-tool-desc`;
+    toggleDesc.textContent = '局域网内手机网页访问/操作桌面 session(未配对请求一律 401)';
+    const toggleSw = document.createElement('label');
+    toggleSw.className = `${P}-switch`;
+    const toggleInput = document.createElement('input');
+    toggleInput.type = 'checkbox';
+    toggleSw.append(toggleInput, document.createElement('i'));
+    toggleRow.append(toggleName, toggleDesc, toggleSw);
+
+    // 地址列表
+    const addrBox = document.createElement('div');
+    addrBox.style.marginTop = '10px';
+
+    // 配对码
+    const codeEl = document.createElement('div');
+    codeEl.className = `${P}-paircode`;
+    const codeRow = document.createElement('div');
+    codeRow.className = `${P}-row`;
+    const codeTtl = document.createElement('span');
+    codeTtl.className = `${P}-status`;
+    const regenBtn = document.createElement('button');
+    regenBtn.className = `${P}-btn`;
+    regenBtn.textContent = '重新生成';
+    codeRow.append(codeTtl, regenBtn);
+
+    // 设备列表
+    const devTitle = document.createElement('div');
+    devTitle.className = `${P}-label`;
+    devTitle.style.marginTop = '12px';
+    devTitle.textContent = '已配对设备';
+    const devBox = document.createElement('div');
+
+    const hint = document.createElement('div');
+    hint.className = `${P}-hint`;
+    hint.textContent = '手机浏览器打开上述任一地址,输入 6 位配对码完成配对(5 分钟有效、一次性)。远程权限沿用 session 自身模式,不可切 yolo。';
+
+    remotePanel.append(toggleRow, addrBox, codeEl, codeRow, devTitle, devBox, hint);
+
+    function renderRmInfo(info: RmInfo): void {
+      rmInfo = info;
+      toggleInput.checked = info.enabled;
+      addrBox.innerHTML = '';
+      for (const ip of info.ips) {
+        const line = document.createElement('div');
+        line.className = `${P}-addr`;
+        line.textContent = `http://${ip}:${info.port}`;
+        addrBox.appendChild(line);
+      }
+      if (info.ips.length === 0) {
+        const line = document.createElement('div');
+        line.className = `${P}-hint`;
+        line.textContent = '未检测到局域网 IPv4 地址';
+        addrBox.appendChild(line);
+      }
+      codeEl.textContent = info.pairCode.split('').join(' ');
+      refreshTtl();
+    }
+
+    function refreshTtl(): void {
+      if (!rmInfo) return;
+      codeTtl.textContent = rmInfo.pairCodeTtl > 0 ? `有效期 ${rmInfo.pairCodeTtl}s` : '已过期,即将自动换新';
+    }
+
+    function renderDevices(): void {
+      void window.kimi.rm.listDevices().then((devices) => {
+        devBox.innerHTML = '';
+        if (devices.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = `${P}-hint`;
+          empty.textContent = '暂无已配对设备';
+          devBox.appendChild(empty);
+          return;
+        }
+        for (const d of devices) {
+          const row = document.createElement('div');
+          row.className = `${P}-dev`;
+          const name = document.createElement('span');
+          name.className = `${P}-dev-name`;
+          name.textContent = d.name;
+          const meta = document.createElement('span');
+          meta.className = `${P}-dev-meta`;
+          meta.textContent = d.lastSeen ? `最近 ${new Date(d.lastSeen).toLocaleString()}` : '未见活动';
+          const revoke = document.createElement('button');
+          revoke.className = `${P}-btn`;
+          revoke.textContent = '撤销';
+          revoke.onclick = () => {
+            revoke.disabled = true;
+            void window.kimi.rm.revokeDevice(d.id).then(renderDevices);
+          };
+          row.append(name, meta, revoke);
+          devBox.appendChild(row);
+        }
+      });
+    }
+
+    toggleInput.onchange = () => {
+      void window.kimi.rm.setEnabled(toggleInput.checked).then(renderRmInfo);
+    };
+    regenBtn.onclick = () => {
+      void window.kimi.rm.regenerateCode().then(({ pairCode, ttl }) => {
+        if (rmInfo) {
+          rmInfo.pairCode = pairCode;
+          rmInfo.pairCodeTtl = ttl;
+          codeEl.textContent = pairCode.split('').join(' ');
+          refreshTtl();
+        }
+      });
+    };
+
+    void window.kimi.rm.getInfo().then((info) => {
+      renderRmInfo(info);
+      // 有效期倒计时(页内每秒刷新)
+      if (rmCountdown) clearInterval(rmCountdown);
+      rmCountdown = setInterval(() => {
+        if (rmInfo && rmInfo.pairCodeTtl > 0) {
+          rmInfo.pairCodeTtl -= 1;
+          refreshTtl();
+        }
+      }, 1000);
+    });
+    renderDevices();
+  }
 
   // ---------- 2. 长期记忆（memory.md） ----------
   const memPanel = section('memory', '长期记忆');

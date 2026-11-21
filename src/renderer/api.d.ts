@@ -16,6 +16,8 @@ import type {
   PermissionRequest,
   PresetMode,
   PromptImage,
+  RemoteDevice,
+  RemoteInfo,
   SessionConfig,
   SessionConfigField,
   SessionMeta,
@@ -230,6 +232,18 @@ export interface TermApi {
   isHeld(sessionId: string): Promise<boolean>;
 }
 
+/** window.kimi.rm — 移动远程控制管理面(prd/PRD-mobile-remote.md) */
+export interface RmApi {
+  /** RemoteBridge 状态 + 局域网地址 + 当前配对码(没有/过期会自动生成) */
+  getInfo(): Promise<RemoteInfo>;
+  /** 开关桥服务(写 settings.remoteEnabled;返回最新 info) */
+  setEnabled(enabled: boolean): Promise<RemoteInfo>;
+  /** 强制换配对码(旧码即废) */
+  regenerateCode(): Promise<{ pairCode: string; ttl: number }>;
+  listDevices(): Promise<RemoteDevice[]>;
+  revokeDevice(id: string): Promise<void>;
+}
+
 /** window.kimi — exposed by preload. */
 export interface KimiApi {
   getSettings(): Promise<AppSettings>;
@@ -330,6 +344,8 @@ export interface KimiApi {
   term: TermApi;
   onTermData(cb: (e: { termId: string; data: string }) => void): void;
   onTermExit(cb: (e: { termId: string; code: number }) => void): void;
+  /** 移动远程控制管理面(prd/PRD-mobile-remote.md) */
+  rm: RmApi;
 
   onCursor(cb: (p: CursorPoint) => void): void;
   onBallState(cb: (s: BallState) => void): void;

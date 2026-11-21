@@ -68,7 +68,16 @@ export class ACPManager {
     for (const wc of [this.getChatContents(), this.getWorkbenchContents(), this.getHomeContents()]) {
       if (wc && !wc.isDestroyed()) wc.send(channel, payload);
     }
+    for (const cb of this.listeners) cb(channel, payload); // 进程内订阅(RemoteBridge SSE)
   }
+
+  /** 进程内事件订阅(与 emit 广播同通道同 payload);返回注销函数 */
+  addListener(cb: (channel: string, payload: unknown) => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  }
+
+  private listeners = new Set<(channel: string, payload: unknown) => void>();
 
   private async ensureStarted(): Promise<acp.ClientSideConnection> {
     if (this.conn) return this.conn;
@@ -691,7 +700,7 @@ export class ACPManager {
   /** 当前 turn 的 agent 文本 ring buffer(design/design-v7.md §2.3):live 接管补放 + 最后一条消息落库共用 */
   private turnBuffers = new Map<string, string[]>();
   /** openSession 令牌:快速连点切换时作废旧 load 的结果(design/design-v7.md §3.2) */
-  private openToken = 0;
+  private openTokens = new Map<string, number>();
 
   isBusy(sessionId: string): boolean {
     return this.busySessions.has(sessionId);
@@ -717,13 +726,16 @@ export class ACPManager {
    * channel 页选中 / 看板点击 / group 编排器都只准走这里;悬浮窗仍用 loadSession。
    */
   async openSession(sessionId: string): Promise<OpenSessionResult> {
-    const token = ++this.openToken;
+    // 防抖令牌按 sessionId 隔离:只作废「同一 session 的过期加载」。
+    // 全局单令牌会让多个消费方(远程 hub/工厂/moon 层)互相误杀,历史永远渲染不出来(实测)。
+    const token = (this.openTokens.get(sessionId) ?? 0) + 1;
+    this.openTokens.set(sessionId, token);
     if (this.busySessions.has(sessionId) || this.heldSessions.has(sessionId)) {
       // 忙中 / 终端接管中 → 补放缓冲、渲染层挂实时流(held 时 buffer 通常为空,由终端视图承担交互)
       return { mode: 'live', buffered: [...(this.turnBuffers.get(sessionId) ?? [])] };
     }
     const { history } = await this.loadSession(sessionId);
-    if (token !== this.openToken) return { mode: 'stale' }; // 已有更新的 openSession 调用,丢弃
+    if (this.openTokens.get(sessionId) !== token) return { mode: 'stale' }; // 同 session 有更新的调用,丢弃
     return { mode: 'history', messages: history };
   }
 

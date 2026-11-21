@@ -18,6 +18,8 @@ import type {
   PermissionRequest,
   PresetMode,
   PromptImage,
+  RemoteDevice,
+  RemoteInfo,
   SessionConfig,
   SessionConfigField,
   SessionMeta,
@@ -252,6 +254,15 @@ contextBridge.exposeInMainWorld('kimi', {
   },
   onTermData: on<{ termId: string; data: string }>(IPC.evTermData),
   onTermExit: on<{ termId: string; code: number }>(IPC.evTermExit),
+
+  // 移动远程控制 (prd/PRD-mobile-remote.md,管理面)
+  rm: {
+    getInfo: (): Promise<RemoteInfo> => ipcRenderer.invoke(IPC.rmGetInfo),
+    setEnabled: (enabled: boolean): Promise<RemoteInfo> => ipcRenderer.invoke(IPC.rmSetEnabled, enabled),
+    regenerateCode: (): Promise<{ pairCode: string; ttl: number }> => ipcRenderer.invoke(IPC.rmRegenerateCode),
+    listDevices: (): Promise<RemoteDevice[]> => ipcRenderer.invoke(IPC.rmListDevices),
+    revokeDevice: (id: string): Promise<void> => ipcRenderer.invoke(IPC.rmRevokeDevice, id),
+  },
 
   onCursor: on<CursorPoint>(IPC.evCursor),
   onBallState: on<BallState>(IPC.evBallState),

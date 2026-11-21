@@ -123,6 +123,15 @@ function createSchema(d: Database.Database): void {
       group_id TEXT, session_id TEXT, role TEXT DEFAULT '',
       PRIMARY KEY (group_id, session_id)
     );
+    -- 移动远程控制(prd/PRD-mobile-remote.md §4.2):已配对设备,token 只存 sha256
+    CREATE TABLE IF NOT EXISTS remote_devices (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT,
+      name TEXT,
+      created_at INTEGER,
+      last_seen INTEGER,
+      revoked INTEGER DEFAULT 0
+    );
   `);
   // 列级迁移：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列
   const taskCols = (d.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((c) => c.name);
@@ -445,4 +454,45 @@ export function addGroupMemberRow(groupId: string, sessionId: string, role: stri
 
 export function removeGroupMemberRow(groupId: string, sessionId: string): void {
   getDb().prepare('DELETE FROM group_members WHERE group_id = ? AND session_id = ?').run(groupId, sessionId);
+}
+
+// ---------- 移动远程控制 (prd/PRD-mobile-remote.md §4.2) ----------
+
+export interface RemoteDeviceRow {
+  id: string;
+  token_hash: string;
+  name: string;
+  created_at: number;
+  last_seen: number | null;
+  revoked: number;
+}
+
+export function insertRemoteDevice(row: Omit<RemoteDeviceRow, 'last_seen' | 'revoked'>): RemoteDeviceRow {
+  getDb()
+    .prepare('INSERT INTO remote_devices (id,token_hash,name,created_at,last_seen,revoked) VALUES (?,?,?,?,?,0)')
+    .run(row.id, row.token_hash, row.name, row.created_at, Date.now());
+  return { ...row, last_seen: Date.now(), revoked: 0 };
+}
+
+/** 按 token 哈希找设备(仅未吊销),认证用 */
+export function getRemoteDeviceByHash(tokenHash: string): RemoteDeviceRow | null {
+  return (
+    (getDb().prepare('SELECT * FROM remote_devices WHERE token_hash = ? AND revoked = 0').get(tokenHash) as
+      | RemoteDeviceRow
+      | undefined) ?? null
+  );
+}
+
+export function touchRemoteDevice(id: string): void {
+  getDb().prepare('UPDATE remote_devices SET last_seen = ? WHERE id = ?').run(Date.now(), id);
+}
+
+export function listRemoteDevices(): RemoteDeviceRow[] {
+  return getDb()
+    .prepare('SELECT * FROM remote_devices WHERE revoked = 0 ORDER BY created_at')
+    .all() as RemoteDeviceRow[];
+}
+
+export function revokeRemoteDevice(id: string): void {
+  getDb().prepare('UPDATE remote_devices SET revoked = 1 WHERE id = ?').run(id);
 }

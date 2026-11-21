@@ -57,6 +57,12 @@ export interface AppSettings {
   /** kimi 模型选项缓存(newSession 返回的 configOptions 里 id='model' 的项,渲染层随时可拉) */
   modelOptions?: { value: string; name: string }[];
   modelCurrent?: string;
+  /** 移动远程控制(prd/PRD-mobile-remote.md):RemoteBridge 开关(默认开) */
+  remoteEnabled?: boolean;
+  /** RemoteBridge 端口(默认 8922,冲突自动 +1) */
+  remotePort?: number;
+  /** 语音转写兜底提供者(P1 占位:仅字段,无实现;/api/asr 一律 501) */
+  asrProvider?: 'whisper-api' | 'sensevoice' | null;
 }
 
 export interface PromptImage {
@@ -150,6 +156,31 @@ export interface SessionConfig {
 }
 
 export type SessionConfigField = 'agentsMd' | 'currentProcessMd' | 'productMd';
+
+// ---- 移动远程控制 (prd/PRD-mobile-remote.md) ----
+
+/** rm:get-info 返回(RemoteBridge 状态 + 当前配对码) */
+export interface RemoteInfo {
+  enabled: boolean;
+  port: number;
+  /** HTTPS 端口(语音前置:iOS Web Speech 需 secure context;证书不可用时=0) */
+  httpsPort: number;
+  ips: string[];
+  pairCode: string;
+  /** 配对码剩余有效期(秒) */
+  pairCodeTtl: number;
+  /** CA 证书是否已生成(/ca.pem 可下载) */
+  caAvailable: boolean;
+  caPath: string;
+}
+
+/** 已配对设备(rm:list-devices 返回;不含 token) */
+export interface RemoteDevice {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastSeen: number | null;
+}
 
 // ---- group 协作 (v7.0 P3, design/design-v7.md §4) ----
 
@@ -418,6 +449,12 @@ export const IPC = {
   chWorktreeMerge: 'ch:worktree-merge',
   chWorktreeDiscard: 'ch:worktree-discard',
   chForkSession: 'ch:fork-session',
+  // 移动远程控制 (prd/PRD-mobile-remote.md,管理面)
+  rmGetInfo: 'rm:get-info',
+  rmSetEnabled: 'rm:set-enabled',
+  rmRegenerateCode: 'rm:regenerate-code',
+  rmListDevices: 'rm:list-devices',
+  rmRevokeDevice: 'rm:revoke-device',
   // 终端三视图 (v7.0 P3b, design/design-v7.md §12)
   termOpen: 'term:open',
   termInput: 'term:input',
