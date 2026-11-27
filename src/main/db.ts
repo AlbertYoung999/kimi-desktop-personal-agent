@@ -132,6 +132,15 @@ function createSchema(d: Database.Database): void {
       last_seen INTEGER,
       revoked INTEGER DEFAULT 0
     );
+    -- Super Agent(design/design-super-agent.md):task_id ↔ worker session 登记(回传链用)
+    CREATE TABLE IF NOT EXISTS sa_tasks (
+      task_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      goal TEXT DEFAULT '',
+      acceptance TEXT DEFAULT '',
+      status TEXT DEFAULT 'in_progress',
+      created_at INTEGER
+    );
   `);
   // 列级迁移：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列
   const taskCols = (d.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((c) => c.name);
@@ -150,6 +159,14 @@ function createSchema(d: Database.Database): void {
   if (!cmCols.includes('model')) d.exec('ALTER TABLE channel_meta ADD COLUMN model TEXT');
   // channel_meta 后加列:per-session 思考深度覆盖('low'|'high'|'max',NULL=跟随全局)
   if (!cmCols.includes('thinking')) d.exec('ALTER TABLE channel_meta ADD COLUMN thinking TEXT');
+  // sa_tasks 后加列:验收卡(P2):打回轮次/更新时间/最近裁决
+  const saCols = (d.prepare('PRAGMA table_info(sa_tasks)').all() as { name: string }[]).map((c) => c.name);
+  if (!saCols.includes('rounds')) d.exec('ALTER TABLE sa_tasks ADD COLUMN rounds INTEGER DEFAULT 0');
+  if (!saCols.includes('updated_at')) {
+    d.exec('ALTER TABLE sa_tasks ADD COLUMN updated_at INTEGER');
+    d.exec('UPDATE sa_tasks SET updated_at = created_at WHERE updated_at IS NULL'); // 老数据回填
+  }
+  if (!saCols.includes('last_verdict')) d.exec('ALTER TABLE sa_tasks ADD COLUMN last_verdict TEXT');
 }
 
 export function metaGet(key: string): string | null {
@@ -495,4 +512,68 @@ export function listRemoteDevices(): RemoteDeviceRow[] {
 
 export function revokeRemoteDevice(id: string): void {
   getDb().prepare('UPDATE remote_devices SET revoked = 1 WHERE id = ?').run(id);
+}
+
+// ---------- Super Agent (design/design-super-agent.md) ----------
+
+export interface SaTaskRow {
+  task_id: string;
+  session_id: string;
+  goal: string;
+  acceptance: string;
+  status: string; // in_progress | review | decision | done | watching
+  rounds: number; // 验收打回轮次(≥3 锁死升级)
+  created_at: number;
+  updated_at: number;
+  last_verdict: string | null; // 最近一次裁决摘要(approved / 打回批注 / worker 失联)
+}
+
+export function insertSaTask(row: Omit<SaTaskRow, 'rounds' | 'updated_at' | 'last_verdict'>): SaTaskRow {
+  const full: SaTaskRow = { ...row, rounds: 0, updated_at: row.created_at, last_verdict: null };
+  getDb()
+    .prepare('INSERT OR REPLACE INTO sa_tasks (task_id,session_id,goal,acceptance,status,rounds,created_at,updated_at,last_verdict) VALUES (@task_id,@session_id,@goal,@acceptance,@status,@rounds,@created_at,@updated_at,@last_verdict)')
+    .run(full);
+  return full;
+}
+
+export function getSaTaskBySession(sessionId: string): SaTaskRow | null {
+  return (
+    (getDb().prepare('SELECT * FROM sa_tasks WHERE session_id = ?').get(sessionId) as SaTaskRow | undefined) ?? null
+  );
+}
+
+export function getSaTask(taskId: string): SaTaskRow | null {
+  return (getDb().prepare('SELECT * FROM sa_tasks WHERE task_id = ?').get(taskId) as SaTaskRow | undefined) ?? null;
+}
+
+export function listSaTasks(status?: string): SaTaskRow[] {
+  const d = getDb();
+  return (
+    status
+      ? d.prepare('SELECT * FROM sa_tasks WHERE status = ? ORDER BY created_at').all(status)
+      : d.prepare('SELECT * FROM sa_tasks ORDER BY created_at').all()
+  ) as SaTaskRow[];
+}
+
+export function updateSaTaskStatus(taskId: string, status: string): void {
+  getDb().prepare('UPDATE sa_tasks SET status = ?, updated_at = ? WHERE task_id = ?').run(status, Date.now(), taskId);
+}
+
+/** 验收卡通用更新(rounds/verdict/status),updated_at 一律刷新 */
+export function updateSaTask(taskId: string, patch: { status?: string; rounds?: number; lastVerdict?: string }): void {
+  const cur = getSaTask(taskId);
+  if (!cur) return;
+  getDb()
+    .prepare('UPDATE sa_tasks SET status = ?, rounds = ?, last_verdict = ?, updated_at = ? WHERE task_id = ?')
+    .run(
+      patch.status ?? cur.status,
+      patch.rounds ?? cur.rounds,
+      patch.lastVerdict !== undefined ? patch.lastVerdict : cur.last_verdict,
+      Date.now(),
+      taskId,
+    );
+}
+
+export function deleteSaTask(taskId: string): void {
+  getDb().prepare('DELETE FROM sa_tasks WHERE task_id = ?').run(taskId);
 }

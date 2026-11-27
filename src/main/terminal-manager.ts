@@ -66,21 +66,34 @@ export class TerminalManager {
     const cwd = findSessionCwd(sessionId);
     if (!cwd) throw new Error(`无法解析 session 的 cwd: ${sessionId}`);
     const termId = `term-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    const proc = pty.spawn('kimi', ['--session', sessionId], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      cwd,
-      env: process.env as Record<string, string>,
-    });
-    this.terms.set(termId, { pty: proc, sessionId });
-    this.deps.hold(sessionId); // 接管:ACP 侧禁止 prompt
-    proc.onData((data) => this.deps.onData(termId, data));
-    proc.onExit(({ exitCode }) => {
+    // 事务化:任何一步失败都必须释放 held——否则 session 会被「终端接管中」永久锁死(2026-11-26 实锤)
+    let proc: ReturnType<typeof pty.spawn> | null = null;
+    try {
+      proc = pty.spawn('kimi', ['--session', sessionId], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: process.env as Record<string, string>,
+      });
+      this.terms.set(termId, { pty: proc!, sessionId });
+      this.deps.hold(sessionId); // 接管:ACP 侧禁止 prompt
+      proc!.onData((data) => this.deps.onData(termId, data));
+      proc!.onExit(({ exitCode }) => {
+        this.terms.delete(termId);
+        this.deps.release(sessionId); // 交还:终端关闭即释放
+        this.deps.onExit(termId, exitCode);
+      });
+    } catch (err) {
       this.terms.delete(termId);
-      this.deps.release(sessionId); // 交还:终端关闭即释放
-      this.deps.onExit(termId, exitCode);
-    });
+      this.deps.release(sessionId); // 兜底:hold 已发生则必释放
+      try {
+        (proc as unknown as { kill?: () => void })?.kill?.();
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    }
     return { termId, cwd };
   }
 

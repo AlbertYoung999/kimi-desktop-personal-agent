@@ -26,6 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'zen', label: 'ZEN', icon: '◉', page: 'page-zen' },
   { id: 'plugins', label: 'PLUGINS', icon: '⬡', page: 'page-plugins' },
   { id: 'agents', label: 'AGENTS', icon: '✎', page: 'page-agents' },
+  { id: 'super', label: 'SUPER', icon: '✦', page: 'page-super' },
 ];
 
 export type PageChangeHandler = (item: NavItem) => void;

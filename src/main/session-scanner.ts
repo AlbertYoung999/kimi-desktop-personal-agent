@@ -102,6 +102,26 @@ function stripReminders(text: string): string {
   return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
 }
 
+/**
+ * cwd 归一(分组键统一):realpath 解析软链(macOS /tmp→/private/tmp 等),失败回退原值,去尾斜杠。
+ * state.json 的 cwd 与 session_index 的 workDir 可能一个归一一个不归一,归一必须在分组键上统一做。
+ * 模块级缓存:realpath 是 syscall,逐 session 调太贵。
+ */
+const cwdNormCache = new Map<string, string>();
+function normalizeCwd(cwd: string): string {
+  if (!cwd) return cwd;
+  let n = cwdNormCache.get(cwd);
+  if (n === undefined) {
+    try {
+      n = fs.realpathSync.native(cwd);
+    } catch {
+      n = cwd;
+    }
+    cwdNormCache.set(cwd, n);
+  }
+  return n.replace(/\/+$/, '');
+}
+
 /** wd_ 目录名 → slug 段(去掉 wd_ 前缀和尾部的 _<hash>) */
 function wdSlugOf(wdDirName: string): string {
   return wdDirName.slice(3).replace(/_[0-9a-f]{8,}$/i, '');
@@ -248,7 +268,7 @@ export class SessionScanner {
               ephemeral: idx?.kind === 'utility',
               agentId: meta?.agent_id ?? undefined,
             },
-            cwd: state.cwd ?? officialIndex.get(sid) ?? '', // 新 schema > 官方 index > slug 归因兜底
+            cwd: normalizeCwd(state.cwd ?? officialIndex.get(sid) ?? ''), // 归一(分组键统一);新 schema > 官方 index > slug 归因兜底
             wdSlug: wdSlugOf(wd),
             archived: meta?.archived === 1,
           });
@@ -320,7 +340,7 @@ export class SessionScanner {
     // 4. 手动项目:path 命中已有 cwd 组的合并进去(带上 projectId/name),其余补为空项目组
     for (const p of manualProjects) {
       if (groups.has(`proj:${p.id}`)) continue; // 上面已建
-      const byPath = p.path ? groups.get(`cwd:${p.path}`) : undefined;
+      const byPath = p.path ? groups.get(`cwd:${normalizeCwd(p.path)}`) : undefined; // 与扫描 cwd 同规则归一后再匹配
       if (byPath) {
         byPath.projectId = p.id;
         byPath.name = p.name;
@@ -333,6 +353,21 @@ export class SessionScanner {
           sessions: [],
         });
       }
+    }
+
+    // 4.5 合并 proj 组与同路径 cwd 组(实测 bug:有 project_id 覆盖的 session 进 proj 组,
+    // 没覆盖的留在 cwd 组,同一项目被劈成两组)。path 归一化相等 → 并入 cwd 组。
+    for (const [key, g] of [...groups]) {
+      if (!key.startsWith('proj:') || !g.projectId || g.sessions.length === 0) continue;
+      const proj = manualProjects.find((p) => p.id === g.projectId);
+      const normPath = proj?.path ? normalizeCwd(proj.path) : '';
+      if (!normPath) continue;
+      const cwdGroup = groups.get(`cwd:${normPath}`);
+      if (!cwdGroup) continue;
+      cwdGroup.sessions.push(...g.sessions);
+      cwdGroup.projectId = g.projectId;
+      cwdGroup.name = g.name; // 展示用手动项目名,dirName 保持目录名
+      groups.delete(key);
     }
 
     // 5. 排序:组内置顶优先、再按最近活跃;组间按最新 session 时间

@@ -18,6 +18,7 @@ import type {
   PromptImage,
   RemoteDevice,
   RemoteInfo,
+  SaTaskDetail,
   SessionConfig,
   SessionConfigField,
   SessionMeta,
@@ -244,6 +245,53 @@ export interface RmApi {
   revokeDevice(id: string): Promise<void>;
 }
 
+/** window.kimi.sa — Super Agent / 分身 GM(design/design-super-agent.md) */
+export interface SaApi {
+  /** 默认 SA session(无则创建并注入引导) */
+  getSession(): Promise<{ sessionId: string }>;
+  listSessions(): Promise<{ sessionId: string; title: string; main: boolean }[]>;
+  /** 多开 SA(不同上下文场景隔离),等引导注入完成才返回 */
+  createSession(label?: string): Promise<{ sessionId: string }>;
+  /** tasks.md 全文(看板:进行中/待验收/待老板决策/已完成) */
+  readTasks(): Promise<{ content: string }>;
+  listInbox(): Promise<{ file: string; taskId: string; at: number; preview: string }[]>;
+  readInbox(file: string): Promise<{ content: string | null }>;
+  /** 认领观察已有 session:空 acceptance=纯观察(持续回执),有=带验收;重复认领返回 already:true */
+  watchSession(sessionId: string, opts?: { goal?: string; acceptance?: string }): Promise<{ taskId: string; already?: boolean }>;
+  /** 取消认领(该 session 不再投回执) */
+  unwatchSession(sessionId: string): Promise<{ ok: boolean; taskId: string }>;
+  /** cron 巡逻配置(nextRunAt 为下次计划执行时间戳,enabled=false 时 null) */
+  getPatrolConfig(): Promise<{ enabled: boolean; intervalMin: number; lastRunAt: number | null; nextRunAt: number | null }>;
+  /** 改动即时生效(停/启/重排程);intervalMin 合法范围 5~1440,非法抛错 */
+  setPatrolConfig(patch: { enabled?: boolean; intervalMin?: number }): Promise<{ enabled: boolean; intervalMin: number; lastRunAt: number | null; nextRunAt: number | null }>;
+  /** 立即巡逻一轮;SA busy/held 返回 {ok:false, reason:'busy'} */
+  runPatrolNow(): Promise<{ ok: boolean; reason?: string }>;
+  /** 「待你决策」队列(review+decision,updatedAt 倒序,inboxPreview=最近回执前 200 字) */
+  listDecisions(): Promise<{ taskId: string; goal: string; acceptance: string; status: string; rounds: number; sid: string; updatedAt: number; inboxPreview: string }[]>;
+  /** 验收裁决:reject 第 3 轮拒绝执行(rounds-exceeded);worker 失联转 decision(worker-gone) */
+  reviewTask(taskId: string, action: 'approve' | 'reject', comment?: string): Promise<{ ok: boolean; reason?: string }>;
+  taskDetail(taskId: string): Promise<SaTaskDetail | null>;
+  /** 结构化任务列表(decision>review>in_progress>watching>done 排序,done 截最近 20) */
+  listTasks(): Promise<
+    {
+      taskId: string;
+      sid: string;
+      /** session 标题 */
+      title: string;
+      goal: string;
+      acceptance: string;
+      status: 'in_progress' | 'review' | 'decision' | 'watching' | 'done';
+      rounds: number;
+      createdAt: number;
+      updatedAt: number;
+      lastVerdict?: string | null;
+    }[]
+  >;
+  /** SA 关键文件读写(白名单:agents.md / memory.md / learning.md / tasks.md) */
+  readFile(name: string): Promise<{ content: string }>;
+  writeFile(name: string, content: string): Promise<{ ok: boolean }>;
+}
+
 /** window.kimi — exposed by preload. */
 export interface KimiApi {
   getSettings(): Promise<AppSettings>;
@@ -346,6 +394,10 @@ export interface KimiApi {
   onTermExit(cb: (e: { termId: string; code: number }) => void): void;
   /** 移动远程控制管理面(prd/PRD-mobile-remote.md) */
   rm: RmApi;
+  /** Super Agent / 分身 GM(design/design-super-agent.md) */
+  sa: SaApi;
+  /** worker 新回执(workbench 窗口){kind:'inbox', taskId} 或巡逻执行 {kind:'patrol', at} 或决策提醒 {kind:'decision', taskId} */
+  onSaEvent(cb: (e: { kind: 'inbox'; taskId: string } | { kind: 'patrol'; at: number } | { kind: 'decision'; taskId: string } | { kind: 'tasks' }) => void): void;
 
   onCursor(cb: (p: CursorPoint) => void): void;
   onBallState(cb: (s: BallState) => void): void;

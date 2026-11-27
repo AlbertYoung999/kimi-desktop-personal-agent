@@ -75,6 +75,13 @@
 
 - **发送按钮变色块**:moon 原版 style.css 的全局 `button{}` 元素选择器污染工厂按钮——36px 横向 padding 把内容盒压成 0,flex-shrink 把 SVG 挤成 0 宽。修:全局规则改 `button:not([class*="kp-"])`(moon 视觉不动,工厂按钮豁免)。教训:**移植第三方页面时,全局元素选择器(button/input/a)是最高危的污染点**。
 
+## P1 live 接管体验修复(2026-11-22)
+
+- 问题:切回忙中 session 只有接缝提示+当前 turn 文本,历史轮次不可见(load 会杀 turn,不能回放);
+- 方案:主进程 per-session **滚动最近消息缓冲** `recentMessages`(≤20 条,user 截 2000/agent 截 4000 字符,replay 不混入),openSession live 分支下发 `recent`;
+- 工厂 live 分支先回放 recent 气泡,再接缝提示,再续流;与 buffered 的前缀三判去重(相等/buffer 含 recent/recent 含 buffer),杜绝重复消息;
+- moon 侧 liveMessages 用 recent 重建;桥透传零改动。
+
 ## 待办
 
 - Step4 语音链路(mkcert HTTPS、Web Speech 确认框、piper TTS 推送);

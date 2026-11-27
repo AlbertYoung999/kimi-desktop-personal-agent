@@ -20,6 +20,8 @@ import type {
   PromptImage,
   RemoteDevice,
   RemoteInfo,
+  SaTaskDetail,
+  SaTaskItem,
   SessionConfig,
   SessionConfigField,
   SessionMeta,
@@ -263,6 +265,41 @@ contextBridge.exposeInMainWorld('kimi', {
     listDevices: (): Promise<RemoteDevice[]> => ipcRenderer.invoke(IPC.rmListDevices),
     revokeDevice: (id: string): Promise<void> => ipcRenderer.invoke(IPC.rmRevokeDevice, id),
   },
+
+  // Super Agent (design/design-super-agent.md)
+  sa: {
+    getSession: (): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC.saGetSession),
+    listSessions: (): Promise<{ sessionId: string; title: string; main: boolean }[]> =>
+      ipcRenderer.invoke(IPC.saListSessions),
+    createSession: (label?: string): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC.saCreateSession, label),
+    readTasks: (): Promise<{ content: string }> => ipcRenderer.invoke(IPC.saReadTasks),
+    listInbox: (): Promise<{ file: string; taskId: string; at: number; preview: string }[]> =>
+      ipcRenderer.invoke(IPC.saListInbox),
+    readInbox: (file: string): Promise<{ content: string | null }> => ipcRenderer.invoke(IPC.saReadInbox, file),
+    /** 认领观察已有 session(turn-done 自动投回执到 inbox) */
+    watchSession: (sessionId: string, opts?: { goal?: string; acceptance?: string }): Promise<{ taskId: string; already?: boolean }> =>
+      ipcRenderer.invoke(IPC.saWatchSession, sessionId, opts),
+    unwatchSession: (sessionId: string): Promise<{ ok: boolean; taskId: string }> =>
+      ipcRenderer.invoke(IPC.saUnwatchSession, sessionId),
+    getPatrolConfig: (): Promise<{ enabled: boolean; intervalMin: number; lastRunAt: number | null; nextRunAt: number | null }> =>
+      ipcRenderer.invoke(IPC.saGetPatrolConfig),
+    setPatrolConfig: (patch: { enabled?: boolean; intervalMin?: number }): Promise<{ enabled: boolean; intervalMin: number; lastRunAt: number | null; nextRunAt: number | null }> =>
+      ipcRenderer.invoke(IPC.saSetPatrolConfig, patch),
+    runPatrolNow: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke(IPC.saRunPatrolNow),
+    /** 「待你决策」队列(review+decision,updatedAt 倒序,附最近回执预览) */
+    listDecisions: (): Promise<{ taskId: string; goal: string; acceptance: string; status: string; rounds: number; sid: string; updatedAt: number; inboxPreview: string }[]> =>
+      ipcRenderer.invoke(IPC.saListDecisions),
+    /** 验收裁决;reject 超 3 轮/worker 失联返回 {ok:false, reason} */
+    reviewTask: (taskId: string, action: 'approve' | 'reject', comment?: string): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke(IPC.saReviewTask, taskId, action, comment),
+    taskDetail: (taskId: string): Promise<SaTaskDetail | null> => ipcRenderer.invoke(IPC.saTaskDetail, taskId),
+    /** 结构化看板数据(decision > review > in_progress > watching > done;done 截最近 20 条) */
+    listTasks: (): Promise<SaTaskItem[]> => ipcRenderer.invoke(IPC.saListTasks),
+    /** SA 工作区文件白名单读写(agents.md / memory.md / learning.md / tasks.md;白名单外抛错) */
+    readFile: (name: string): Promise<{ content: string }> => ipcRenderer.invoke(IPC.saReadFile, name),
+    writeFile: (name: string, content: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.saWriteFile, name, content),
+  },
+  onSaEvent: on<{ kind: 'inbox'; taskId: string } | { kind: 'patrol'; at: number } | { kind: 'decision'; taskId: string } | { kind: 'tasks' }>(IPC.evSaEvent),
 
   onCursor: on<CursorPoint>(IPC.evCursor),
   onBallState: on<BallState>(IPC.evBallState),

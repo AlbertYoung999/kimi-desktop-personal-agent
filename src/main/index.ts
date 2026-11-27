@@ -20,6 +20,28 @@ import { GroupOrchestrator } from './group-orchestrator.js';
 import { createWorktree, discardWorktree, getDiff, listWorktrees, mergeWorktree } from './worktree-manager.js';
 import { TerminalManager } from './terminal-manager.js';
 import { RemoteBridge } from './remote-bridge.js';
+import {
+  createSuperSession,
+  getOrCreateSuperSession,
+  getPatrolConfig,
+  initSuperAgent,
+  listDecisions,
+  listInbox,
+  listSuperSessions,
+  readInboxFile,
+  readTasksMd,
+  reviewTask,
+  runPatrol,
+  sessionUnwatch,
+  sessionWatch,
+  setPatrolConfig,
+  startPatrolOnBoot,
+  stopPatrol,
+  taskDetail,
+  listTasksStructured,
+  readSaFile,
+  writeSaFile,
+} from './super-agent.js';
 import { createTray } from './tray.js';
 import { sampleSysStats } from './sysstats.js';
 import { speak, stopSpeaking, listTtsVoices, setTtsVoice, previewVoice, setTtsProvider, setTtsPiperVoice } from './tts.js';
@@ -124,6 +146,17 @@ const remoteBridge = new RemoteBridge({
   acp: acpManager,
   scan: () => sessionScanner.scan(),
   staticDir: path.join(app.getAppPath(), 'dist', 'renderer', 'remote'),
+  // Super Agent 端点(镜像 super-agent.ts 现有函数;均为惰性调用,模块级安全)
+  sa: {
+    getSession: () => getOrCreateSuperSession(),
+    listTasks: () => listTasksStructured(),
+    listDecisions: () => listDecisions(),
+    reviewTask: (taskId, action, comment) => reviewTask(taskId, action, comment),
+    listInbox: () => listInbox(),
+    readInboxFile: (file) => readInboxFile(file),
+    getPatrolConfig: () => getPatrolConfig(),
+    setPatrolConfig: (patch) => setPatrolConfig(patch),
+  },
 });
 
 // ---------- sys stats polling (home page left rail) ----------
@@ -553,6 +586,47 @@ function registerIpc(): void {
   ipcMain.handle(IPC.rmRegenerateCode, () => remoteBridge.regeneratePairCode());
   ipcMain.handle(IPC.rmListDevices, () => remoteBridge.listDevices());
   ipcMain.handle(IPC.rmRevokeDevice, (_e, id: string) => remoteBridge.revokeDevice(id));
+
+  // ---- Super Agent (design/design-super-agent.md) ----
+  ipcMain.handle(IPC.saGetSession, async () => ({ sessionId: await getOrCreateSuperSession() }));
+  ipcMain.handle(IPC.saListSessions, () => listSuperSessions());
+  ipcMain.handle(IPC.saCreateSession, async (_e, label?: string) => ({ sessionId: await createSuperSession(label) }));
+  ipcMain.handle(IPC.saReadTasks, () => ({ content: readTasksMd() }));
+  ipcMain.handle(IPC.saListInbox, () => listInbox());
+  ipcMain.handle(IPC.saReadInbox, (_e, file: string) => ({ content: readInboxFile(file) }));
+  // 认领观察已有 session(channel 页「SA 观察」入口);✗ 前缀错误文本转为 IPC error
+  ipcMain.handle(IPC.saWatchSession, async (_e, sid: string, opts: { goal?: string; acceptance?: string }) => {
+    const r = await sessionWatch({ sid, goal: opts?.goal, acceptance: opts?.acceptance });
+    if (r.startsWith('✗')) throw new Error(r);
+    return JSON.parse(r) as { taskId: string; already?: boolean };
+  });
+  ipcMain.handle(IPC.saUnwatchSession, (_e, sid: string) => {
+    const r = sessionUnwatch(sid);
+    if (r.startsWith('✗')) throw new Error(r);
+    return JSON.parse(r) as { ok: boolean; taskId: string };
+  });
+  // cron 巡逻(可配置/可开关)
+  ipcMain.handle(IPC.saGetPatrolConfig, () => getPatrolConfig());
+  ipcMain.handle(IPC.saSetPatrolConfig, (_e, patch: { enabled?: boolean; intervalMin?: number }) => setPatrolConfig(patch ?? {}));
+  ipcMain.handle(IPC.saRunPatrolNow, () => runPatrol());
+  // 验收卡(待你决策)
+  ipcMain.handle(IPC.saListDecisions, () => listDecisions());
+  ipcMain.handle(IPC.saReviewTask, (_e, taskId: string, action: 'approve' | 'reject', comment?: string) =>
+    reviewTask(taskId, action, comment),
+  );
+  ipcMain.handle(IPC.saTaskDetail, (_e, taskId: string) => taskDetail(taskId));
+  // 结构化看板数据(全表,done 截最近 20,附 session 标题)
+  ipcMain.handle(IPC.saListTasks, () => listTasksStructured());
+  // SA 工作区文件白名单读写(设置区;只有 agents/memory/learning/tasks 四个 md)
+  ipcMain.handle(IPC.saReadFile, (_e, name: string) => {
+    const content = readSaFile(name);
+    if (content === null) throw new Error(`不允许的文件名: ${name}(白名单: agents.md / memory.md / learning.md / tasks.md)`);
+    return { content };
+  });
+  ipcMain.handle(IPC.saWriteFile, (_e, name: string, content: string) => {
+    if (!writeSaFile(name, content)) throw new Error(`不允许的文件名: ${name}(白名单: agents.md / memory.md / learning.md / tasks.md)`);
+    return { ok: true };
+  });
   ipcMain.on(IPC.ballMove, (_e, pos: { x: number; y: number }) => moveBallTo(pos.x, pos.y));
   ipcMain.on(IPC.setChatPinned, (_e, pinned: boolean) => setChatPinned(pinned));
   ipcMain.handle(IPC.getChatPinned, () => getChatPinned());
@@ -633,6 +707,20 @@ if (!gotLock) {
     });
     acpManager.setWorkbenchMcpUrl(mcpUrl);
 
+    // Super Agent(design/design-super-agent.md):工作区引导 + 回传链(turn-done → inbox → 唤醒)
+    initSuperAgent({
+      acp: acpManager,
+      mcpUrl: () => mcpUrl,
+      // SaDeps.scan:tasks.md 行内 sid12 → 实时标题解析(看板渲染用;扫描器只读)
+      scan: () => sessionScanner.scan(),
+      push: (payload) => {
+        const wc = getWorkbenchWindow()?.webContents;
+        if (wc && !wc.isDestroyed()) wc.send(IPC.evSaEvent, payload);
+        remoteBridge.notifySaEvent(payload); // 手机端全局 SSE 通道同步
+      },
+    });
+    startPatrolOnBoot(); // cron 巡逻:enabled(默认开)则排程,首轮 2 分钟后
+
     // info radar: scheduled fetch + AI structuring, pushes evRadarItems to the workbench
     startRadarSchedulers({
       askOnce: (text) => acpManager.askOnce(text),
@@ -676,6 +764,7 @@ if (!gotLock) {
     sessionScanner.stop();
     terminalManager.dispose(); // 杀掉所有 pty / kimi vis 子进程
     remoteBridge.stop();
+    stopPatrol(); // SA 巡逻定时器
     disposeWindows();
     void acpManager.dispose();
   });

@@ -3,7 +3,8 @@
  * 12 张参考图渐变轮播,localStorage 记位置;仅路径改 ./assets/reference/。
  */
 
-const BACKGROUNDS = Array.from({ length: 12 }, (_, i) => `./assets/reference/${i}.jpg`);
+// 人工剔除过含月亮/大段文字的图(与 Three.js 月球竞争),剩 3/4/5/7/11
+const BACKGROUNDS = [3, 4, 5, 7, 11].map((i) => `./assets/reference/${i}.jpg`);
 const STORAGE_KEY = 'moon-background-index';
 const TRANSITION_MS = 300;
 

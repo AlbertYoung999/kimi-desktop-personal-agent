@@ -23,6 +23,7 @@ import { initZenPage } from './pages/zen';
 import { initPluginsPage } from './pages/plugins';
 import { initAgentsPage } from './pages/agents';
 import { initChannelPage } from './pages/channel';
+import { initSuperPage, syncSuperBinding } from './pages/super';
 
 // clock
 const clock = document.getElementById('clock')!;
@@ -48,12 +49,15 @@ window.addEventListener('keydown', (e) => {
 initNav((item) => {
   // dashboard 从 display:none 恢复时重算画布尺寸
   if (item.id === 'dashboard') refreshStage();
+  // SUPER 激活时校准 SA session 绑定(重建/多开切换后重绑)
+  if (item.id === 'super') syncSuperBinding();
 });
 initHomePage();
 initZenPage();
 initPluginsPage();
 initAgentsPage();
 initChannelPage();
+initSuperPage();
 initVoice();
 initMainLog();
 

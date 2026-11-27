@@ -185,7 +185,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px 0;
+  padding: 10px 12px 8px; /* 上下留白:与消息区、输入区分层,不贴边 */
   flex-shrink: 0;
 }
 .kp-mode-spacer { flex: 1; }
@@ -498,6 +498,40 @@
 .kp-btn-send:hover { filter: brightness(1.1); }
 .kp-btn-send:active { transform: scale(0.9); }
 .kp-btn-send:disabled { opacity: 0.4; cursor: default; }
+/* 流式中发送键仍可点(=排队发送):底色脉动提示正在回复 */
+.kp-btn-send.streaming { animation: kp-sendPulse 1.6s ease-in-out infinite; }
+@keyframes kp-sendPulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.25); }
+}
+/* 识别中发送键 = 停止识别(红色脉动) */
+.kp-btn-send.recording {
+  background: var(--danger);
+  color: #fff;
+  animation: kp-sendPulse 1.2s ease-in-out infinite;
+}
+
+
+/* 独立停止钮:发送键左侧小一号圆形,仅 streaming 时显示 */
+.kp-btn-stop {
+  border: none;
+  background: var(--panel-2, rgba(255,255,255,0.12));
+  color: var(--fg-2);
+  width: 30px; height: 30px; /* 与发送键同款同尺寸,成对设计 */
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+.kp-btn-stop svg { width: 12px; height: 12px; fill: currentColor; }
+.kp-btn-stop:hover { background: var(--danger); color: #fff; }
+.kp-btn-stop:active { transform: scale(0.9); }
+.kp-btn-stop svg { width: 13px; height: 13px; }
+.kp-btn-stop:hover { background: var(--hover); color: var(--danger); border-color: var(--danger); }
+.kp-btn-stop:active { transform: scale(0.92); }
 
 /* ============================================================
    permission bar

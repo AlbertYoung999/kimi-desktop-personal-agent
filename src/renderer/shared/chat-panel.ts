@@ -35,6 +35,8 @@ export interface ChatPanelOpts {
 }
 
 export interface ChatPanelHandle {
+  /** 补发队首一条:turn 结束但 turn-done 事件被错过(锁屏/断线)时的补偿路径 */
+  flushQueue(): void;
   setSession(sid: string): Promise<void>;
   /** 新建空会话并绑定(悬浮窗「新建会话」按钮:立即创建,不做 loadSession 回放) */
   newSession(): Promise<void>;
@@ -44,6 +46,12 @@ export interface ChatPanelHandle {
   setInputText(text: string): void;
   /** 等价点击发送按钮(空文本+无附件不发送;streaming 中则入队) */
   sendNow(): void;
+  /**
+   * 宿主在容器从隐藏变为可见后调用:强制滚底(幂等)。
+   * display:none 时 scrollHeight=0,加载期的 scrollToBottom 白滚,显示后停在顶部——
+   * 修复「重开面板停在历史顶部」的滚动 bug。
+   */
+  notifyVisible(): void;
   destroy(): void;
 }
 
@@ -90,6 +98,9 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
             <svg viewBox="0 0 24 24"><path d="M21 11.5l-8.8 8.8a5.2 5.2 0 0 1-7.4-7.4l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.7 1.7 0 0 1-2.5-2.5l8.2-8.2"/></svg>
           </button>
           <textarea class="kp-input" rows="1" placeholder="问点什么…"></textarea>
+          <button class="kp-btn-stop hidden" title="停止">
+            <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/></svg>
+          </button>
           <button class="kp-btn-send" title="发送">
             <svg viewBox="0 0 24 24"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.8 18-3.7-7.5L3 9.8z"/></svg>
           </button>
@@ -106,6 +117,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   const messagesEl = $('.kp-messages');
   const inputEl = $('.kp-input') as unknown as HTMLTextAreaElement;
   const sendBtn = $('.kp-btn-send') as unknown as HTMLButtonElement;
+  const stopBtn = $('.kp-btn-stop') as unknown as HTMLButtonElement;
 
   // ---------- backend / host(可插拔;缺省 Electron 桌面端) ----------
   const backend: ChatBackend = opts.backend ?? createElectronBackend();
@@ -537,12 +549,132 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   let directSendCancelPending = false;
 
   const SEND_SVG = '<svg viewBox="0 0 24 24"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.8 18-3.7-7.5L3 9.8z"/></svg>';
-  const STOP_SVG = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/></svg>';
+  const MIC_SVG = '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5v3.5"/></svg>';
+
+  // ---------- 语音输入(Web Speech API;实时稿进状态条,定稿直接写进输入框) ----------
+  // 轻量结构类型:lib.dom 不含 Web Speech API 类型
+  interface SpeechRecognitionLike {
+    lang: string;
+    continuous: boolean;
+    interimResults: boolean;
+    onresult: ((e: any) => void) | null;
+    onerror: ((e: any) => void) | null;
+    onend: (() => void) | null;
+    start(): void;
+    stop(): void;
+  }
+  const SpeechRecognitionCtor =
+    ((window as any).webkitSpeechRecognition ?? (window as any).SpeechRecognition) as
+      | (new () => SpeechRecognitionLike)
+      | undefined;
+  // 非安全上下文(部分 http 远程页)或 API 缺失时:语音键不出现,回退纯文本输入
+  const speechAvailable = !!SpeechRecognitionCtor && window.isSecureContext;
+
+  let listening = false;
+  let recognizer: SpeechRecognitionLike | null = null;
+  let voiceBaseText = ''; // 开始识别前输入框已有文本(快照)
+  let voiceFinalText = ''; // 累计 isFinal 的定稿
+  let voiceInterimText = ''; // 当前非 final 尾段(实时稿)
+
+  /** base + final + interim 合并写入输入框,光标置末尾 */
+  function writeVoiceValue() {
+    inputEl.value = voiceBaseText + voiceFinalText + voiceInterimText;
+    autoGrow();
+    inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
+  }
+
+  function startVoice() {
+    if (!speechAvailable || listening) return;
+    listening = true;
+    voiceBaseText = inputEl.value; // 快照:识别期间只保护 base 之前的内容
+    voiceFinalText = '';
+    voiceInterimText = '';
+    recognizer = new SpeechRecognitionCtor!();
+    recognizer.lang = 'zh-CN';
+    recognizer.continuous = true;
+    recognizer.interimResults = true;
+    recognizer.onresult = (e: any) => {
+      if (!listening) return;
+      let interim = '';
+      for (let i = e.resultIndex as number; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) voiceFinalText += res[0].transcript as string;
+        else interim += res[0].transcript as string;
+      }
+      voiceInterimText = interim;
+      // 实时稿直接进输入框:整段重写尾部,下一帧覆盖刷新,无追加累积错误
+      writeVoiceValue();
+      updateSendBtn(); // 有定稿后空态→发送键切换
+    };
+    recognizer.onerror = () => stopVoice();
+    recognizer.onend = () => stopVoice(); // 服务自行断流/stop() 都走这里(幂等)
+    try {
+      recognizer.start();
+    } catch {
+      stopVoice();
+      return;
+    }
+    updateSendBtn();
+  }
+
+  /**
+   * 停止识别。默认把输入框收敛为 base+final(去掉 interim 尾段);
+   * keepValue(识别中用户手动打字触发自动停止)时保留输入框现状——
+   * 用户刚打的内容已被 TA 自己"确认",不回滚。
+   */
+  function stopVoice(opts?: { keepValue?: boolean }) {
+    listening = false;
+    try {
+      recognizer?.stop();
+    } catch {
+      // 已停止
+    }
+    recognizer = null;
+    if (!opts?.keepValue) {
+      // 停止时把剩余实时稿也转正——只停录音,不删用户刚说的内容
+      voiceFinalText += voiceInterimText;
+      voiceInterimText = '';
+      writeVoiceValue(); // = baseText + finalText(含原实时稿)
+    }
+    updateSendBtn();
+    inputEl.focus();
+  }
 
   function updateSendBtn() {
-    sendBtn.innerHTML = streaming ? STOP_SVG : SEND_SVG;
-    sendBtn.title = streaming ? '停止' : '发送';
-    inputEl.placeholder = streaming ? '回复中… 输入后回车可排队' : '问点什么…';
+    // 发送键恒为「发送」(streaming 时点击 = 排队,send() 内部处理);
+    // 停止收进独立小按钮,仅 streaming 时显示;
+    // 空输入且支持语音时发送键变为语音键;识别中变为「停止识别」
+    stopBtn.classList.toggle('hidden', !streaming);
+    const emptyInput = inputEl.value.trim() === '' && pendingImages.length === 0;
+    if (listening) {
+      sendBtn.innerHTML = MIC_SVG;
+      sendBtn.title = '停止识别';
+      sendBtn.classList.add('recording');
+      sendBtn.classList.remove('streaming');
+    } else if (streaming) {
+      sendBtn.innerHTML = SEND_SVG;
+      sendBtn.title = '排队发送';
+      sendBtn.classList.add('streaming');
+      sendBtn.classList.remove('recording');
+    } else if (emptyInput && speechAvailable) {
+      sendBtn.innerHTML = MIC_SVG;
+      sendBtn.title = '语音输入';
+      sendBtn.classList.remove('streaming', 'recording');
+    } else {
+      sendBtn.innerHTML = SEND_SVG;
+      sendBtn.title = '发送';
+      sendBtn.classList.remove('streaming', 'recording');
+    }
+    inputEl.placeholder = streaming ? '回复中… 可直接排队发送' : '问点什么…';
+  }
+
+  /** 补发队首一条:turn 结束但 turn-done 事件被错过(锁屏/断线)时的补偿路径,catchup 调用 */
+  function flushQueue(): void {
+    const queue = currentQueue();
+    if (queue.length === 0) return;
+    const next = queue.shift()!;
+    renderQueueBar();
+    void doSend(next);
   }
 
   function renderQueueBar() {
@@ -642,6 +774,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     const msg: QueuedMessage = { text, images: [...pendingImages], quote: pendingQuote };
     inputEl.value = '';
     autoGrow();
+    updateSendBtn(); // 清空后空态恢复语音键
     clearAttach();
     clearQuote();
     if (streaming) {
@@ -656,7 +789,19 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     if (currentSession) void backend.cancel(currentSession.sessionId);
   }
 
-  sendBtn.onclick = () => (streaming ? stopStreaming() : send());
+  sendBtn.onclick = () => {
+    if (listening) {
+      stopVoice();
+      return;
+    }
+    const emptyInput = inputEl.value.trim() === '' && pendingImages.length === 0;
+    if (!streaming && emptyInput && speechAvailable) {
+      startVoice();
+      return;
+    }
+    send();
+  };
+  stopBtn.onclick = () => stopStreaming();
   inputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
@@ -669,7 +814,15 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     inputEl.style.height = 'auto';
     inputEl.style.height = Math.min(inputEl.scrollHeight, 96) + 'px';
   }
-  inputEl.addEventListener('input', autoGrow);
+  inputEl.addEventListener('input', () => {
+    if (listening) {
+      // 识别中手动打字:继续渲染会覆盖用户刚打的内容 → 自动停止识别,
+      // 保留输入框现状;再按语音键会以新 baseText 重新识别
+      stopVoice({ keepValue: true });
+    }
+    autoGrow();
+    updateSendBtn(); // 空↔有字 切换语音键/发送键
+  });
 
   // ---------- capture / attach (多图,上限 MAX_IMAGES) ----------
   function renderAttach() {
@@ -1170,6 +1323,7 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
     renderAttach();
     if (d?.quote) setQuote(d.quote);
     else clearQuote();
+    updateSendBtn(); // 草稿恢复后刷新语音/发送键
   }
 
   // ---------- session switching ----------
@@ -1232,15 +1386,42 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
         addMessage(item.role, item.text);
       }
     } else {
-      // live: 补放缓冲区已发内容,后续 chunk 经 onChunk 续流到同一气泡
+      // live: 先回放 recent(最近若干轮,旧→新),再渲染接缝,最后 buffered 续流
+      // recent 字段由主进程契约新增;类型未落地前本地拓宽,落地后此处自然兼容
+      const recent = [
+        ...((result as { recent?: { role: 'user' | 'agent'; text: string }[] }).recent ?? []),
+      ];
+      const bufferedText = result.buffered.join('');
+      // 去重:recent 末尾的进行中 agent 消息与 buffered 是同一条(相等或互为前缀)时,
+      // 不重复渲染,取更全的一份作为续流气泡;两边都没有则各自正常渲染
+      let streamText: string | null = null;
+      const last = recent[recent.length - 1];
+      if (last?.role === 'agent') {
+        if (last.text === bufferedText) {
+          streamText = bufferedText;
+          recent.pop();
+        } else if (last.text && bufferedText.startsWith(last.text)) {
+          streamText = bufferedText; // buffered 更全(快照更晚)
+          recent.pop();
+        } else if (bufferedText && last.text.startsWith(bufferedText)) {
+          streamText = last.text; // recent 更全
+          recent.pop();
+        }
+      }
+      for (const item of recent) {
+        addMessage(item.role, item.text);
+      }
+      // 接缝提示(有 recent 时用小字式样;无 recent 维持原提示)
       const hint = document.createElement('div');
       hint.className = 'msg tool';
-      hint.textContent = '⏵ 任务正在执行中，输出将实时显示…';
+      hint.textContent =
+        recent.length > 0 ? '··· 任务正在执行中，输出将实时显示 ···' : '⏵ 任务正在执行中，输出将实时显示…';
       messagesEl.appendChild(hint);
-      const bufferedText = result.buffered.join('');
-      if (bufferedText) {
-        currentAgentText = bufferedText;
-        currentAgentEl = addMessage('agent', bufferedText);
+      // 当前 turn 文本渲染为带光标的 agent 气泡,后续 chunk 经 onChunk 续流同一气泡
+      const liveText = streamText ?? bufferedText;
+      if (liveText) {
+        currentAgentText = liveText;
+        currentAgentEl = addMessage('agent', liveText);
         currentAgentEl.classList.add('cursor-blink');
       }
       host.setBallState?.('thinking');
@@ -1287,19 +1468,26 @@ export function createChatPanel(container: HTMLElement, opts: ChatPanelOpts): Ch
   void refreshThinking();
 
   return {
+    /** 补发队首一条(turn 结束但 turn-done 事件被错过时的补偿路径,catchup 用) */
+    flushQueue,
     setSession,
     newSession,
     reloadModes,
     setInputText(text: string) {
       inputEl.value = text;
       autoGrow();
+      updateSendBtn(); // 有字/空字切换发送键与语音键
       inputEl.focus();
     },
     sendNow() {
       send(); // 等价点击发送按钮(内部已处理空内容与 streaming 入队)
     },
+    notifyVisible() {
+      scrollToBottom(true);
+    },
     destroy() {
       destroyed = true;
+      if (listening) stopVoice();
       window.clearTimeout(flashTimer);
       document.removeEventListener('click', onDocClick);
       document.removeEventListener('keydown', onDocKeydown);

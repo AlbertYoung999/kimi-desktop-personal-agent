@@ -57,7 +57,14 @@ export function createTermView(host: HTMLElement, opts: { onExit: (sid: string) 
   return {
     async open(sessionId: string): Promise<void> {
       await close(); // 先清掉旧实例(换 session/重开)
-      const r = await window.kimi.term.open(sessionId); // 打开即 held
+      let r: { termId: string };
+      try {
+        r = await window.kimi.term.open(sessionId); // 打开即 held
+      } catch (err) {
+        // 主进程 hold 可能已发生,强制交还防锁死
+        void window.kimi.term.release(sessionId).catch(() => undefined);
+        throw err;
+      }
       termId = r.termId;
       sid = sessionId;
       host.innerHTML = '';

@@ -604,10 +604,19 @@ export function initAgentsPage(): void {
       renderRmInfo(info);
       // 有效期倒计时(页内每秒刷新)
       if (rmCountdown) clearInterval(rmCountdown);
+      let rmRefreshing = false;
       rmCountdown = setInterval(() => {
-        if (rmInfo && rmInfo.pairCodeTtl > 0) {
+        if (!rmInfo) return;
+        if (rmInfo.pairCodeTtl > 0) {
           rmInfo.pairCodeTtl -= 1;
           refreshTtl();
+        } else if (!rmRefreshing) {
+          // 码过期:服务端已轮换,重新拉取显示新码(否则用户读到的是永远失效的旧码)
+          rmRefreshing = true;
+          void window.kimi.rm.getInfo().then((fresh) => {
+            rmRefreshing = false;
+            renderRmInfo(fresh);
+          });
         }
       }, 1000);
     });

@@ -1,7 +1,7 @@
 {
   "name": "kimi-desktop-personal-agent",
   "productName": "Kimi Desktop Personal Agent",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Kimi desktop personal agent — voice-first home, self-evolving workbench, ACP client for kimi-code CLI",
   "license": "MIT",
   "author": "AlbertYang",

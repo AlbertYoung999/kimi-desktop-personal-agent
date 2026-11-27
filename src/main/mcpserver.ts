@@ -13,6 +13,22 @@ import { recentDigest } from './signals.js';
 import { getSettings } from './store.js';
 import { getWidgetRegistry } from './widget-registry.js';
 import { listEngines, getLayout, listLibrary, listProjects, listTasks as listTasksSnapshot, readMemory, saveTask, updateLibraryItem, wbRoot } from './workbench.js';
+import {
+  isAuthorizedSaKey,
+  listInbox,
+  saTasksTool,
+  sessionCreateWorker,
+  sessionDigest,
+  sessionList,
+  sessionMessage,
+  sessionUnwatch,
+  sessionWatch,
+  visualCheck,
+  dispatchTask,
+  followUp,
+  verifyTask,
+  type TaskCard,
+} from './super-agent.js';
 
 /**
  * Workbench MCP server — the self-evolution plane (design/design-evolve.md).
@@ -75,7 +91,13 @@ function fuzzy<T>(items: T[], query: string, pick: (item: T) => string): T | und
   return items.find((i) => pick(i).toLowerCase() === q) ?? items.find((i) => pick(i).toLowerCase().includes(q) || q.includes(pick(i).toLowerCase()));
 }
 
-function buildServer(handlers: McpHandlers): McpServer {
+/**
+ * saAuthorized:本请求是否带有效 sa_key(key 存在于 settings.superSessionKeys 即授权,
+ * 创建窗口期的 pending 值也放行——2026-11-24 时序竞态修复;design/design-super-agent.md §3)。
+ * 特权工具仅授权时才注册(列表与调用双门控:无状态传输每次请求重建 server,
+ * 未授权方 tools/list 不可见、直接 call 按未知工具拒绝)。
+ */
+function buildServer(handlers: McpHandlers, saAuthorized = false): McpServer {
   const server = new McpServer({ name: 'kimi-float-workbench', version: '0.2.0' });
   const ok = (text: string) => ({ content: [{ type: 'text' as const, text }] });
   // 工具开关：禁用的工具不注册（design: Agents 页可配置）
@@ -645,6 +667,175 @@ function buildServer(handlers: McpHandlers): McpServer {
     },
   );
 
+  // ---------- Super Agent 特权工具(design/design-super-agent.md §3) ----------
+  if (saAuthorized) {
+    server.registerTool(
+      'session_digest',
+      {
+        description:
+          '查看任意 session 的进展摘要(title/cwd/busy/lastMessage/currentProcessMd)。何时用:巡逻检查、验收前看进展、回答老板「X 进展如何」之前。何时别用:要全量清单用 session_list。示例:session_digest({sid: "session_abc…"})',
+        inputSchema: { sid: z.string().describe('目标 session id') },
+      },
+      async ({ sid }) => ok(await sessionDigest(sid)),
+    );
+
+    server.registerTool(
+      'session_create',
+      {
+        description:
+          '创建全新 worker session 并下发任务卡。何时用:全新独立任务、或怕污染已有 session 上下文。何时别用:同项目已有托管/活跃 session——改用 dispatch_task({sid, …}) 原 session 续接。acceptance 必须可机检,否则拒发。示例:session_create({cwd: "/proj", taskCard: {goal: "改登录页", acceptance: "npm run build 通过"}})',
+        inputSchema: {
+          cwd: z.string().describe('worker 的项目目录(绝对路径)'),
+          taskCard: z.object({
+            task_id: z.string().optional(),
+            goal: z.string().describe('一句话目标'),
+            context: z.string().optional().describe('路径或链接,不塞全文'),
+            acceptance: z.string().describe('可机检验收:「跑 X 命令通过」/「产出 Y 文件含 Z」/「指标 ≥ N」'),
+            constraints: z.string().optional(),
+            report: z.string().optional(),
+          }),
+        },
+      },
+      async ({ cwd, taskCard }) => ok(await sessionCreateWorker({ cwd, taskCard: taskCard as TaskCard })),
+    );
+
+    server.registerTool(
+      'session_message',
+      {
+        description:
+          '与任意 session 对话(busy 自动排队 30s,终端接管拒绝)。何时用:直接追问、补充说明、临时沟通。何时别用:跟进已登记任务用 follow_up(taskId 路由更准)。示例:session_message({sid: "…", text: "补充:只要移动端样式"})',
+        inputSchema: { sid: z.string(), text: z.string() },
+      },
+      async ({ sid, text }) => ok(await sessionMessage(sid, text)),
+    );
+
+    server.registerTool(
+      'session_watch',
+      {
+        description:
+          '认领观察一个已有 session(turn-done 自动投回执到 inbox,无需新建)。何时用:把进行中/别人开的 session 纳入雷达。何时别用:要下发任务用 dispatch_task。acceptance 空=纯观察持续投递,有=回执后转待验收。示例:session_watch({sid: "…", goal: "观察 eng-talk 改版"})',
+        inputSchema: {
+          sid: z.string().describe('已有 session id(不知道有哪些就先 session_list)'),
+          goal: z.string().optional(),
+          acceptance: z.string().optional().describe('可机检验收,可空'),
+        },
+      },
+      async ({ sid, goal, acceptance }) => ok(await sessionWatch({ sid, goal, acceptance })),
+    );
+
+    server.registerTool(
+      'session_unwatch',
+      {
+        description: '取消认领观察(该 session 不再投回执)。何时用:观察目标已结束或误认领。示例:session_unwatch({sid: "…"})',
+        inputSchema: { sid: z.string() },
+      },
+      async ({ sid }) => ok(sessionUnwatch(sid)),
+    );
+
+    server.registerTool(
+      'session_list',
+      {
+        description:
+          '列出全部 session({sid,title,cwd,busy,updatedAt,lastMessage},updatedAt 倒序)。何时用:回答数量/清单/「有哪些」类问题前必须调它(禁止凭记忆);找认领/下发目标。何时别用:已知 sid 查单个进展用 session_digest 更省。默认排除 utility 与已归档;includeArchived=true 时包含。示例:session_list({})',
+        inputSchema: { includeArchived: z.boolean().optional().describe('默认 false;true = 包含归档与 utility') },
+      },
+      async ({ includeArchived }) => ok(sessionList(includeArchived ?? false)),
+    );
+
+    server.registerTool(
+      'visual_check',
+      {
+        description:
+          'UI/页面任务的视觉验收:浏览器打开 url 截图(jpeg 存 super-agent/shots/),返回 {path, expect, note} 后用 ReadMediaFile 亲眼对照 expect 判断。何时用:acceptance 含视觉预期的任务验收。何时别用:纯逻辑/接口任务(用 verify_task 的 command/file 机检)。需要 kimi-webbridge 运行中。示例:visual_check({url: "http://localhost:3000", expect: "顶部导航栏不遮挡按钮"})',
+        inputSchema: {
+          url: z.string().describe('要打开的页面 URL'),
+          expect: z.string().optional().describe('视觉预期(布局/样式要点),回显供对照'),
+          fullPage: z.boolean().optional().describe('长页面等待更久(5s)'),
+        },
+      },
+      async ({ url, expect, fullPage }) => ok(await visualCheck({ url, expect, fullPage })),
+    );
+
+    server.registerTool(
+      'dispatch_task',
+      {
+        description:
+          '派发任务(loop 第一步:选通道+发卡+登记)。何时用:一切任务下发——同项目已有托管/活跃 session 传 sid 原 session 续接(【SA·任务卡】前缀,用户可见);全新独立任务传 cwd 新开。何时别用:没有可机检验收标准的任务(先和老板澄清再发)。验收:acceptance 自由文本 或 checks 数组 [{type:"command",run,expect?}|{type:"file",path,contains?}|{type:"visual",url,expect}|{type:"judgment",note}]。成功后无需轮询——worker 完成会自动回执。示例:dispatch_task({cwd: "/proj", taskCard: {goal: "改登录页", checks: [{type: "command", run: "npm run build"}]}})',
+        inputSchema: {
+          sid: z.string().optional().describe('原 session id(延续性任务)'),
+          cwd: z.string().optional().describe('项目目录(全新任务新建 worker)'),
+          taskCard: z.object({
+            goal: z.string().describe('一句话目标'),
+            acceptance: z.string().optional().describe('自由文本验收标准'),
+            checks: z
+              .array(
+                z.object({
+                  type: z.enum(['command', 'file', 'visual', 'judgment']),
+                  run: z.string().optional(),
+                  expect: z.string().optional(),
+                  path: z.string().optional(),
+                  contains: z.string().optional(),
+                  url: z.string().optional(),
+                  note: z.string().optional(),
+                }),
+              )
+              .optional()
+              .describe('结构化验收(可机检)'),
+            constraints: z.string().optional(),
+            report: z.string().optional(),
+            context: z.string().optional(),
+          }),
+        },
+      },
+      async ({ sid, cwd, taskCard }) => ok(await dispatchTask({ sid, cwd, taskCard: taskCard as TaskCard })),
+    );
+
+    server.registerTool(
+      'follow_up',
+      {
+        description:
+          '按任务卡跟进/打回 worker(消息带【SA】前缀)。何时用:verify 不过打回、催进度、补要求。何时别用:任务未登记(先 dispatch_task)。示例:follow_up({taskId: "sat-…", text: "按钮颜色还是不对,按设计稿 #3 改"})',
+        inputSchema: { taskId: z.string(), text: z.string() },
+      },
+      async ({ taskId, text }) => ok(await followUp({ taskId, text })),
+    );
+
+    server.registerTool(
+      'verify_task',
+      {
+        description:
+          '执行任务 acceptance 的机检,返回 {pass, evidence[]}。何时用:收到回执后验收。何时别用:它不改状态——判断后你自己 sa_tasks update 或向老板汇报。command 在项目目录内跑(60s 超时);file 路径限项目内;visual 需 kimi-webbridge;judgment 你引用证据自己判。示例:verify_task({taskId: "sat-…"})',
+        inputSchema: { taskId: z.string() },
+      },
+      async ({ taskId }) => ok(await verifyTask({ taskId })),
+    );
+
+    server.registerTool(
+      'sa_tasks',
+      {
+        description:
+          'tasks.md 看板增改查。何时用:验收后改状态、手动记卡。何时别用:看实时进展用 session_digest / session_list。action: list(全文)/add(追加,section 可选)/update(按 task_id 改状态:in_progress/review/decision/done)。示例:sa_tasks({action: "update", task_id: "sat-…", status: "done"})',
+        inputSchema: {
+          action: z.enum(['list', 'add', 'update']),
+          task_id: z.string().optional(),
+          status: z.string().optional(),
+          text: z.string().optional(),
+          section: z.string().optional(),
+        },
+      },
+      async ({ action, task_id, status, text, section }) => ok(saTasksTool(action, { task_id, status, text, section })),
+    );
+
+    server.registerTool(
+      'sa_inbox',
+      {
+        description: '读 worker 回执信箱(inbox/,最近 20 条:文件名+时间+预览)。何时用:被唤醒验收时、巡逻时查新回执。示例:sa_inbox({})',
+        inputSchema: {},
+      },
+      async () => ok(JSON.stringify(listInbox(), null, 1)),
+    );
+  }
+
   return server;
 }
 
@@ -653,8 +844,11 @@ export async function startWorkbenchMcp(handlers: McpHandlers): Promise<string> 
   const httpServer = http.createServer((req, res) => {
     void (async () => {
       // stateless: fresh server + transport per request
+      // SA 特权工具调用方识别:MCP URL 上的 ?sa_key= 存在即授权(pending 窗口也放行)
+      const saKey = new URL(req.url ?? '/', 'http://localhost').searchParams.get('sa_key');
+      const saAuthorized = isAuthorizedSaKey(saKey);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      const server = buildServer(handlers);
+      const server = buildServer(handlers, saAuthorized);
       res.on('close', () => {
         void transport.close();
         void server.close();

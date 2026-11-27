@@ -233,6 +233,7 @@ export class ACPManager {
               const buf = this.turnBuffers.get(params.sessionId) ?? [];
               buf.push(text);
               this.turnBuffers.set(params.sessionId, buf);
+              this.appendRecentAgent(params.sessionId, text); // 滚动最近消息(跨轮次 live 接管)
               this.emit(IPC.evChunk, { sessionId: params.sessionId, kind: 'text', text });
             }
             break;
@@ -464,6 +465,7 @@ export class ACPManager {
         : [];
     const res = await conn.newSession({ cwd: sessionCwd, mcpServers });
     this.registerSessionCwd(res.sessionId, sessionCwd);
+    if (mcpServers.length > 0) this.attachedWithMcp.add(res.sessionId); // 建时即带 MCP,无需 hook 补挂
     this.cacheModelOptions(res.configOptions);
     await this.applySessionConfig(res.sessionId);
     const meta: SessionMeta = {
@@ -702,8 +704,38 @@ export class ACPManager {
   /** openSession 令牌:快速连点切换时作废旧 load 的结果(design/design-v7.md §3.2) */
   private openTokens = new Map<string, number>();
 
+  /**
+   * 滚动最近消息缓冲(跨轮次,live 接管时给渲染层上下文):
+   * prompt() 进 user 条目,live 的 agent chunk 累积进当前 turn 的 agent 条目;
+   * 每 session 上限 20 条(超出 shift 淘汰),user 截 2000、agent 单条截 4000(保留前段)。
+   * replay(loadSession 历史回放)不进这里——历史由 loadSession 的 history 路径覆盖。
+   */
+  private recentMessages = new Map<string, { role: 'user' | 'agent'; text: string; at: number }[]>();
+  /** turn 进行中标记(agent chunk 据此决定就地追加还是开新条目) */
+  private recentTurnOpen = new Set<string>();
+  private static readonly RECENT_CAP = 20;
+
   isBusy(sessionId: string): boolean {
     return this.busySessions.has(sessionId);
+  }
+
+  private pushRecent(sessionId: string, entry: { role: 'user' | 'agent'; text: string; at: number }): void {
+    const list = this.recentMessages.get(sessionId) ?? [];
+    list.push(entry);
+    while (list.length > ACPManager.RECENT_CAP) list.shift();
+    this.recentMessages.set(sessionId, list);
+  }
+
+  /** live 的 agent chunk:turn 未结束且末尾是 agent 条目则就地追加,否则开新条目 */
+  private appendRecentAgent(sessionId: string, text: string): void {
+    const list = this.recentMessages.get(sessionId) ?? [];
+    const last = list[list.length - 1];
+    if (this.recentTurnOpen.has(sessionId) && last?.role === 'agent') {
+      last.text = (last.text + text).slice(0, 4000);
+      this.recentMessages.set(sessionId, list);
+    } else {
+      this.pushRecent(sessionId, { role: 'agent', text: text.slice(0, 4000), at: Date.now() });
+    }
   }
 
   /** 决策#2:turn 结束把尾部最后一段 agent 文本(截断 500 字符)落 channel_meta */
@@ -732,7 +764,12 @@ export class ACPManager {
     this.openTokens.set(sessionId, token);
     if (this.busySessions.has(sessionId) || this.heldSessions.has(sessionId)) {
       // 忙中 / 终端接管中 → 补放缓冲、渲染层挂实时流(held 时 buffer 通常为空,由终端视图承担交互)
-      return { mode: 'live', buffered: [...(this.turnBuffers.get(sessionId) ?? [])] };
+      // recent:滚动最近消息(旧→新,含当前 turn 进行中的 agent 条目,渲染层接流续写)
+      return {
+        mode: 'live',
+        buffered: [...(this.turnBuffers.get(sessionId) ?? [])],
+        recent: [...(this.recentMessages.get(sessionId) ?? [])],
+      };
     }
     const { history } = await this.loadSession(sessionId);
     if (this.openTokens.get(sessionId) !== token) return { mode: 'stale' }; // 同 session 有更新的调用,丢弃
@@ -813,6 +850,8 @@ export class ACPManager {
     deleteChannelMeta(sessionId);
     removeSessionFromIndex(sessionId);
     this.turnBuffers.delete(sessionId);
+    this.recentMessages.delete(sessionId);
+    this.recentTurnOpen.delete(sessionId);
     this.sessionCwds.delete(sessionId);
   }
 
@@ -826,6 +865,57 @@ export class ACPManager {
     } finally {
       this.collectors.delete(sessionId);
     }
+  }
+
+  /**
+   * SA 专用建会话(design/design-super-agent.md):专属 cwd + additionalDirectories(项目只读)
+   * + 带 sa_key 的 workbench MCP 挂载(特权工具的调用方鉴权)。
+   */
+  async newSuperSession(opts: { cwd: string; additionalDirectories: string[]; mcpUrl: string }): Promise<string> {
+    const conn = await this.ensureStarted();
+    const res = await conn.newSession({
+      cwd: opts.cwd,
+      additionalDirectories: opts.additionalDirectories,
+      mcpServers: [{ type: 'http' as const, name: 'workbench', url: opts.mcpUrl, headers: [] }],
+    });
+    this.registerSessionCwd(res.sessionId, opts.cwd);
+    this.attachedWithMcp.add(res.sessionId); // SA 建时即挂带 sa_key 的 MCP
+    await this.applySessionConfig(res.sessionId);
+    upsertSession({ sessionId: res.sessionId, cwd: opts.cwd, title: '', createdAt: Date.now(), updatedAt: Date.now(), kind: 'chat' });
+    return res.sessionId;
+  }
+
+  /**
+   * 带 MCP 挂载的 attach。
+   * 选型实测(kimi 2.1.1,wire.jsonl llm.tools_snapshot 探针,2026-11-24):
+   * resume 带 mcpServers 时工具快照与新建一致(46 工具/19 个 mcp__workbench__),
+   * resume 转发 mcpServers **有效**;此前「恢复后 MCP 全丢」的实锤根因是 SA 老 session
+   * 缺 sa_key 导致 resume 走错路径/无 MCP 挂载,而非 resume 丢挂载。
+   * → 保持 resume(更轻,无 replay 开销)。busy 时调用方自守铁律(不 load/resume 忙中)。
+   */
+  private async attachWithMcp(sessionId: string, cwd: string, mcpServers: acp.McpServer[]): Promise<void> {
+    const conn = await this.ensureStarted();
+    await conn.resumeSession({ sessionId, cwd, mcpServers });
+    this.registerSessionCwd(sessionId, cwd);
+    this.attachedWithMcp.add(sessionId);
+    await this.applySessionConfig(sessionId);
+  }
+
+  /** SA 会话跨复活:持久化的 sid 在 prompt 前必须 resume(否则 Unknown sessionId),并带 MCP 挂载(含 sa_key) */
+  async resumeSessionWithMcp(sessionId: string, cwd: string, mcpUrl: string): Promise<void> {
+    await this.attachWithMcp(sessionId, cwd, [{ type: 'http' as const, name: 'workbench', url: mcpUrl, headers: [] }]);
+  }
+
+  /**
+   * prompt 前的 attach 保障(最后一英里):kimi auto-attach 不带 MCP,
+   * 未挂过 MCP 的 session 若注册了 hook 就先挂(目前只有 SA 注册:补挂带 sa_key 的 workbench MCP)。
+   * 本进程内 attach 过的(newSession/attachWithMcp 带 mcp 路径)直接跳过。
+   */
+  private attachedWithMcp = new Set<string>();
+  private sessionAttachHook: ((sessionId: string) => Promise<void>) | null = null;
+
+  setSessionAttachHook(hook: (sessionId: string) => Promise<void>): void {
+    this.sessionAttachHook = hook;
   }
 
   /** session/fork(design/design-v7.md §9,SDK 0.23 unstable_*):分叉副本可加入 group 参与讨论 */
@@ -881,10 +971,24 @@ export class ACPManager {
     if (this.heldSessions.has(sessionId)) {
       throw new Error('该 session 正被终端接管中,请先在终端里操作或点击「交还」');
     }
+    // attach 保障:未挂 MCP 的 session 先经 hook 补挂(SA 才有 hook;其他 session no-op)。
+    // fail-open:hook 失败不挡 prompt。busy 也会走到这里——resume 不杀 turn(只有 load 杀),安全。
+    if (!this.attachedWithMcp.has(sessionId) && this.sessionAttachHook) {
+      try {
+        await this.sessionAttachHook(sessionId);
+      } catch (err) {
+        console.warn('[acp] session attach hook failed(继续 prompt):', err);
+      }
+    }
     // mark busy synchronously BEFORE any await — loadSession must never race
     // ahead of this flag and interrupt the turn with a history replay
     this.busySessions.add(sessionId);
     this.turnBuffers.delete(sessionId); // 新 turn 开始,清空上一轮的 ring buffer
+    // 滚动最近消息:user 条目(注入轮不进);finalize 在 finally
+    if (!text.startsWith('<system-reminder>')) {
+      this.pushRecent(sessionId, { role: 'user', text: text.slice(0, 2000), at: Date.now() });
+    }
+    this.recentTurnOpen.add(sessionId);
     const conn = await this.ensureStarted();
     const finalText = modePrompt ? `${modePrompt}\n\n用户输入：\n${text}` : text;
     const blocks: acp.ContentBlock[] = [];
@@ -901,7 +1005,10 @@ export class ACPManager {
       upsertSession({
         sessionId,
         cwd: getSettings().workspaceDir,
-        title: text.slice(0, 30),
+        // system-reminder 包裹的都是注入 prompt(SA 引导/任务卡/唤醒/巡逻),不该当标题——保留现标题
+        title: text.startsWith('<system-reminder>')
+          ? (getSessionIndex().find((s) => s.sessionId === sessionId)?.title ?? '')
+          : text.slice(0, 30),
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
@@ -911,6 +1018,7 @@ export class ACPManager {
       this.maybeUpdateCurrentProcess(sessionId, text, agentText);
     } finally {
       this.busySessions.delete(sessionId);
+      this.recentTurnOpen.delete(sessionId); // turn 结束(成功或失败):finalize 当前 agent 条目
     }
   }
 
@@ -943,6 +1051,7 @@ export class ACPManager {
     const res = await conn.newSession({ cwd: getSettings().workspaceDir, mcpServers: this.workbenchMcpServers() });
     this.cacheModelOptions(res.configOptions);
     this.registerSessionCwd(res.sessionId, getSettings().workspaceDir);
+    if (this.workbenchMcpUrl) this.attachedWithMcp.add(res.sessionId); // 建时即带 MCP
     this.mainSessionId = res.sessionId;
     saveSettings({ mainSessionId: res.sessionId });
     this.emit(IPC.evMainSession, { sessionId: res.sessionId }); // 渲染层同步主会话 id（防缓存过期）
@@ -1012,9 +1121,9 @@ export class ACPManager {
       // 持久化的主会话来自上一个 kimi 进程——prompt 前必须先 attach，
       // 否则报 Unknown sessionId。attach 失败（会话已被清理）就换新的。
       try {
+        // resume 必须带上 MCP——否则恢复的主会话没有 workbench 工具(实测踩坑);
+        // 反向实测(2.1.1 探针):resume 带 mcpServers 时工具快照与新建一致,转发有效
         const conn = await this.ensureStarted();
-        // resume 也必须带上 MCP——否则恢复的主会话没有 workbench 工具，
-        // agent 会退化成用 Bash 硬试（实测踩坑）
         await conn.resumeSession({
           sessionId: sid,
           cwd: getSettings().workspaceDir,
@@ -1130,6 +1239,8 @@ export class ACPManager {
       list.push(sessionId);
       fs.writeFileSync(file, JSON.stringify(list));
       removeSessionFromIndex(sessionId);
+      this.recentMessages.delete(sessionId); // 滚动缓冲随垃圾清理回收
+      this.recentTurnOpen.delete(sessionId);
       // runtime sweep with a grace delay (kimi flushes session storage async);
       // the startup sweep is the backstop for anything still pending
       setTimeout(() => this.deleteSessionDir(sessionId), 5 * 60_000).unref();

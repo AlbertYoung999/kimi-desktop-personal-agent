@@ -19,12 +19,31 @@
   <div id="moon-glow"></div>
   <div id="moon-container"></div>
 
-  <!-- 多 session 入口(moon 是单 session,我们加一个氛围不违和的切换器) -->
-  <button id="session-btn" aria-label="切换会话">选择会话 ▾</button>
-  <button id="menu-btn" aria-label="菜单" title="菜单">···</button>
+  <!-- 统一顶栏(chat/moon/SA 三屏):左=会话列表 / 中=小球+会话名 / 右=设置 -->
+  <div id="topbar">
+    <button id="tb-list" class="glass-fab" aria-label="会话列表" title="会话列表">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <div id="tb-center">
+      <div id="tb-ball">
+        <div id="tb-gloss"></div>
+        <div id="tb-face"><span class="tb-eye"></span><span class="tb-eye"></span></div>
+        <span id="tb-ball-badge" hidden>1</span>
+      </div>
+      <div id="tb-label">选择会话</div>
+    </div>
+    <button id="tb-menu" class="glass-fab" aria-label="设置" title="设置">···</button>
+  </div>
+
+  <!-- 小球管家:待检查任务面板(turn 已完成且未读的 session 汇总) -->
+  <div id="tb-panel" hidden>
+    <div id="tb-panel-title">待检查 0 项</div>
+    <div id="tb-panel-list"></div>
+    <button id="tb-panel-clear">全部已读</button>
+  </div>
 
   <div id="top-bar">
-    <div id="connection-status">未连接</div>
+    <div id="connection-status" title="连接状态"></div>
     <div id="date-display">--</div>
     <div id="phase-name">--</div>
     <div id="phase-detail">--</div>
@@ -52,58 +71,6 @@
     <div id="perm-actions"></div>
   </div>
 
-  <div id="bottom-bar">
-    <button id="bg-prev" class="icon-btn" aria-label="上一个背景">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
-      </svg>
-    </button>
-
-    <button id="sessions-btn" class="icon-btn" title="会话" aria-label="会话">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
-      </svg>
-    </button>
-
-    <button id="text-btn" class="icon-btn" title="文字输入" aria-label="文字输入">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M20 5H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 12H4v-2h7v2zm9-4H4v-2h16v2zm0-4H4V7h16v2z"/>
-      </svg>
-    </button>
-
-    <button id="history-btn" class="icon-btn" title="历史记录" aria-label="历史记录">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/>
-        <path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
-      </svg>
-    </button>
-
-    <button id="mic-btn" class="mic-btn" aria-label="麦克风">
-      <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-      </svg>
-    </button>
-
-    <button id="bg-next" class="icon-btn" aria-label="下一个背景">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-      </svg>
-    </button>
-  </div>
-
-  <!-- 识别结果/文字输入 确认弹窗(moon 骨架 + 我们的「重说」) -->
-  <div id="transcript-modal">
-    <div class="modal-card">
-      <div class="modal-title" id="transcript-title">识别结果</div>
-      <textarea id="transcript-input" rows="3"></textarea>
-      <div class="modal-actions">
-        <button id="transcript-cancel" class="text-btn">取消</button>
-        <button id="transcript-retry" class="text-btn">重说</button>
-        <button id="transcript-send" class="text-btn primary">发送</button>
-      </div>
-    </div>
-  </div>
 
   <div id="history-modal">
     <div class="modal-card history-card">
@@ -115,30 +82,15 @@
     </div>
   </div>
 
-  <!-- 底部抽屉式项目树(session 切换) -->
+  <!-- 底部抽屉式项目树(会话切换) -->
   <div id="session-drawer">
     <div class="drawer-sheet">
       <div class="drawer-handle"></div>
       <div class="drawer-title">选择会话</div>
       <div id="drawer-tree"></div>
       <div class="drawer-footer">
-        <button id="drawer-unpair" class="text-btn">取消配对</button>
+        <span></span>
         <button id="drawer-close" class="text-btn">关闭</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 配对屏(moon 美学:星空上的玻璃卡) -->
-  <div id="pair-overlay">
-    <div class="modal-card pair-card">
-      <div class="modal-title pair-title">KIMI · talking to the moon</div>
-      <div class="pair-hint">输入桌面端显示的 6 位配对码</div>
-      <input id="pair-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
-             placeholder="······" autocomplete="one-time-code" />
-      <input id="pair-device" type="text" placeholder="设备名(默认:我的手机)" />
-      <div id="pair-err"></div>
-      <div class="modal-actions">
-        <button id="pair-submit" class="text-btn primary">配对</button>
       </div>
     </div>
   </div>
@@ -155,24 +107,19 @@
     </div>
   </div>
 
-  <!-- 底部抽屉式菜单(界面样式切换 / 语音播报 / HTTPS 指引) -->
+  <!-- 底部抽屉式菜单(背景切换 / 语音播报 / 历史记录 / HTTPS 指引) -->
   <div id="menu-drawer">
     <div class="drawer-sheet">
       <div class="drawer-handle"></div>
       <div class="drawer-title">菜单</div>
-      <div class="menu-sec">界面样式</div>
-      <label class="menu-radio" data-mode="moon">
-        <input type="radio" name="view-mode" value="moon" />
-        <span>月之暗面</span>
-        <i class="menu-check">✓</i>
-      </label>
-      <label class="menu-radio" data-mode="chat">
-        <input type="radio" name="view-mode" value="chat" />
-        <span>经典对话</span>
-        <i class="menu-check">✓</i>
-      </label>
+      <div class="menu-sec">背景</div>
+      <div class="menu-bg-row">
+        <button id="menu-bg-prev" class="menu-item">‹ 上一个背景</button>
+        <button id="menu-bg-next" class="menu-item">下一个背景 ›</button>
+      </div>
       <div class="menu-sec">设置</div>
       <button id="menu-tts" class="menu-item">🔊 语音播报：开</button>
+      <button id="menu-history" class="menu-item">🕘 历史记录</button>
       <button id="menu-guide" class="menu-item" hidden>HTTPS 指引</button>
       <div class="drawer-footer">
         <span></span>
@@ -181,20 +128,50 @@
     </div>
   </div>
 
-  <!-- 经典对话模式(createChatPanel 工厂整建制挂载;微信式语音保留) -->
+  <!-- 经典对话模式(createChatPanel 工厂整建制挂载;左右悬浮玻璃按钮,nav bar 删除) -->
   <div id="chat-view">
-    <div class="cv-topbar">
-      <button id="cv-back" class="cv-back">‹ 返回</button>
-      <span id="cv-title">会话</span>
-      <button id="cv-voice-toggle" class="cv-menu-btn" aria-label="语音模式" title="语音模式">🎙</button>
-      <button id="cv-menu" class="cv-menu-btn" aria-label="菜单">···</button>
+    <div id="cv-panel" class="cv-scope"></div>
+  </div>
+
+  <!-- Super Agent 屏(左右悬浮玻璃按钮;分段 inset;对话 = 工厂复用远程后端) -->
+  <div id="sa-view">
+    <div class="sa-seg">
+      <button data-seg="board" class="on">看板<span class="sa-seg-badge" id="sa-seg-badge" hidden></span></button>
+      <button data-seg="chat">对话</button>
     </div>
-    <div id="cv-panel"></div>
-    <div class="cv-inputbar" id="cv-voice-bar" hidden>
-      <button id="cv-kbd" class="cv-kbd" aria-label="切回键盘">⌨</button>
-      <button id="cv-hold">🎙 按住 说话</button>
+    <div id="sa-chat" class="sa-pane" hidden><div id="sa-panel" class="sa-scope"></div></div>
+    <div id="sa-board" class="sa-pane sa-scroll"></div>
+  </div>
+
+  <!-- Kiki(语义分组第四空间) -->
+  <div id="kiki-view">
+    <div id="kiki-scroll"></div>
+  </div>
+
+  <!-- 底部合体悬浮胶囊:上层主输入(仅 moon 空间)/ 下层 TabBar 四空间 -->
+  <div id="dock">
+    <div id="main-input" hidden>
+      <textarea id="mi-text" rows="1" placeholder="点击输入或按住说话…"></textarea>
+      <button id="mi-voice" class="mi-btn" aria-label="语音">🎙</button>
+      <button id="mi-send" class="mi-btn primary" aria-label="发送" hidden>➤</button>
     </div>
-    <div id="cv-interim" hidden></div>
+    <div id="tabbar">
+      <button class="tab-item" data-space="chat"><span class="tab-icon">💬</span><span class="tab-label">Chat</span></button>
+      <button class="tab-item" data-space="moon"><span class="tab-icon" id="tab-moon-icon"><span id="tab-moon-lit"></span></span><span class="tab-label">Moon</span></button>
+      <button class="tab-item" data-space="sa"><span class="tab-icon tab-icon-sa">★</span><span class="tab-label">SA</span><span id="tab-sa-dot"></span><span id="tab-sa-count"></span></button>
+      <button class="tab-item" data-space="kiki"><span class="tab-icon"><img id="tab-kiki-icon" src="./avatar.png" alt="Kiki" /></span><span class="tab-label">Kiki</span></button>
+    </div>
+  </div>
+
+  <!-- SA 回执全文弹层 -->
+  <div id="sa-modal">
+    <div class="modal-card sa-modal-card">
+      <div class="modal-title" id="sa-modal-title">回执</div>
+      <div id="sa-modal-body"></div>
+      <div class="modal-actions">
+        <button id="sa-modal-close" class="text-btn">关闭</button>
+      </div>
+    </div>
   </div>
 
   <!-- 文件「信件」动画容器(文件推送本期不做,动画备用) -->

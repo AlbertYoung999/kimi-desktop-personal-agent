@@ -6,6 +6,10 @@ All notable changes to Kimi Desktop Personal Agent will be documented in this fi
 
 各版本详细开发记录见 `changelogs/changelog-v{版本}-{版本开始日期}.md`(每个子版本一份,推 GitHub 时更新)。
 
+## [0.9.0] - 2026-11-22(开发中)
+
+版本主题:**Super Agent(分身 GM)**——常驻分身 session 管理 worker agent 团队:特权工具(查进展/建 worker/跨会话对话/任务看板/回执信箱)、任务卡协议(可机检验收 evidence gate)、事件化回传链、SUPER tab(直聊+看板+回执)。详细记录见 `changelogs/changelog-v0.9.0-20261122.md`。
+
 ## [0.8.0] - 2026-11-22
 
 版本主题:**移动远程控制**——手机(及后续手表)作为与桌面平权的新 channel,局域网/远程访问桌面 session。详细记录见 `changelogs/changelog-v0.8.0-20261121.md`。

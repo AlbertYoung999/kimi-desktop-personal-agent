@@ -9,7 +9,10 @@ import { IPC } from '../shared/types.js';
 import { getRemoteDeviceByHash, insertRemoteDevice, listRemoteDevices, revokeRemoteDevice, touchRemoteDevice, type RemoteDeviceRow } from './db.js';
 import { ensureRemoteCerts, type RemoteCerts } from './remote-certs.js';
 import { recordSignal } from './signals.js';
-import { findMode, getSettings, listModes } from './store.js';
+import { findMode, getSettings, listModes, saveSettings } from './store.js';
+import { readSaFile, writeSaFile } from './super-agent.js';
+import { listAgents, readAgentMd, writeAgentMd, createAgent, updateAgent, deleteAgent } from './agent-library.js';
+import { readMemory, writeMemory } from './workbench.js';
 import { DEFAULT_VOICE_ZH, piperSynth } from './tts/piper.js';
 
 /**
@@ -45,6 +48,17 @@ export interface RemoteBridgeDeps {
   scan: () => ChannelTree;
   /** 手机客户端静态目录(dist/renderer/remote,并行 agent 产物) */
   staticDir: string;
+  /** Super Agent 端点(镜像 super-agent.ts 现有函数,index.ts 注入) */
+  sa: {
+    getSession(): Promise<string>;
+    listTasks(): unknown;
+    listDecisions(): unknown;
+    reviewTask(taskId: string, action: 'approve' | 'reject', comment?: string): Promise<{ ok: boolean; reason?: string }>;
+    listInbox(): unknown;
+    readInboxFile(file: string): string | null;
+    getPatrolConfig(): unknown;
+    setPatrolConfig(patch: { enabled?: boolean; intervalMin?: number }): unknown;
+  };
 }
 
 interface SseClient {
@@ -250,15 +264,24 @@ export class RemoteBridge {
     this.broadcast(null, { type: 'tree-changed' });
   }
 
+  /** sa:event 转发到手机端全局 SSE 通道(契约:{type:'sa', saKind, taskId?, at?}) */
+  notifySaEvent(payload: { kind: 'inbox' | 'patrol' | 'decision' | 'tasks'; taskId?: string; at?: number }): void {
+    this.broadcast(null, { type: 'sa', saKind: payload.kind, taskId: payload.taskId, at: payload.at });
+  }
+
   // ---------- 鉴权 ----------
 
   private auth(req: http.IncomingMessage): RemoteDeviceRow | null {
+    // 2026-11-26 用户拍板:配对体系移除,LAN 内打开即用(安全边界 = 仅局域网绑定)。
+    // 带 token 的老设备照旧识别(审计可溯源);无 token 给个虚拟设备放行。
     const url = new URL(req.url ?? '/', 'http://localhost');
     let token = '';
     const header = req.headers.authorization;
     if (header?.startsWith('Bearer ')) token = header.slice(7).trim();
     if (!token) token = url.searchParams.get('token') ?? ''; // SSE 方便(EventSource 不能带 header)
-    if (!token) return null;
+    if (!token) {
+      return { id: 'lan-guest', token_hash: '', name: 'lan-guest', created_at: 0, last_seen: null, revoked: 0 };
+    }
     const device = getRemoteDeviceByHash(sha256(token));
     if (device) touchRemoteDevice(device.id);
     return device;
@@ -618,6 +641,140 @@ export class RemoteBridge {
       return this.sendJson(res, 501, { error: 'asr-not-configured' });
     }
 
+    // ---- Super Agent 端点(design/design-super-agent.md;镜像 super-agent.ts 现有函数) ----
+    if (url.pathname === '/api/sa/session' && method === 'GET') {
+      // 首次会等引导注入(数秒~几十秒),前端有创建中态
+      return this.sendJson(res, 200, { sessionId: await this.deps.sa.getSession() });
+    }
+    if (url.pathname === '/api/sa/tasks' && method === 'GET') {
+      return this.sendJson(res, 200, this.deps.sa.listTasks());
+    }
+    if (url.pathname === '/api/sa/decisions' && method === 'GET') {
+      return this.sendJson(res, 200, this.deps.sa.listDecisions());
+    }
+    if (url.pathname === '/api/sa/review' && method === 'POST') {
+      const body = await this.readBody(req);
+      const taskId = String(body.taskId ?? '');
+      const action = String(body.action ?? '');
+      if (!taskId || (action !== 'approve' && action !== 'reject')) {
+        return this.sendJson(res, 400, { error: "missing taskId / action('approve'|'reject')" });
+      }
+      const result = await this.deps.sa.reviewTask(taskId, action, typeof body.comment === 'string' ? body.comment : undefined);
+      recordSignal('remote', `[${device.name}] SA 验收 ${taskId} → ${action}${result.ok ? '' : `(${result.reason})`}`);
+      return this.sendJson(res, 200, result);
+    }
+    if (url.pathname === '/api/sa/inbox' && method === 'GET') {
+      return this.sendJson(res, 200, this.deps.sa.listInbox());
+    }
+    if (url.pathname === '/api/sa/inbox-file' && method === 'GET') {
+      const file = url.searchParams.get('file') ?? '';
+      const content = this.deps.sa.readInboxFile(file); // basename 防穿越在 super-agent 侧
+      if (content === null) return this.sendJson(res, 404, { error: 'not_found' });
+      return this.sendJson(res, 200, { content });
+    }
+    if (url.pathname === '/api/sa/patrol' && method === 'GET') {
+      return this.sendJson(res, 200, this.deps.sa.getPatrolConfig());
+    }
+    if (url.pathname === '/api/sa/patrol' && method === 'POST') {
+      const body = await this.readBody(req);
+      try {
+        const cfg = this.deps.sa.setPatrolConfig({
+          enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+          intervalMin: typeof body.intervalMin === 'number' ? body.intervalMin : undefined,
+        });
+        return this.sendJson(res, 200, cfg);
+      } catch (err) {
+        return this.sendJson(res, 400, { error: String(err) }); // intervalMin 越界等
+      }
+    }
+
+    // ---- Kiki 镜像(薄路由,直调主进程现成函数;约束里「缺的小补 preload 镜像」) ----
+    // 分身文件(白名单由 super-agent 侧 readSaFile/writeSaFile 强制:agents/memory/learning/tasks.md)
+    if (url.pathname === '/api/sa/file' && method === 'GET') {
+      const name = String(url.searchParams.get('name') ?? '');
+      const content = readSaFile(name);
+      if (content === null) return this.sendJson(res, 404, { error: 'unknown file' });
+      return this.sendJson(res, 200, { content });
+    }
+    if (url.pathname === '/api/sa/file' && method === 'POST') {
+      const body = await this.readBody(req);
+      const name = String(body.name ?? '');
+      if (!writeSaFile(name, String(body.content ?? ''))) return this.sendJson(res, 400, { error: 'unknown file' });
+      recordSignal('remote', `[${device.name}] SA 文件写入:${name}`);
+      return this.sendJson(res, 200, { ok: true });
+    }
+    // agent 库(avatar/简介/能力定义)
+    if (url.pathname === '/api/agents' && method === 'GET') {
+      return this.sendJson(res, 200, listAgents());
+    }
+    if (url.pathname === '/api/agent-md' && method === 'GET') {
+      const id = String(url.searchParams.get('id') ?? '');
+      try {
+        return this.sendJson(res, 200, { content: readAgentMd(id) });
+      } catch {
+        return this.sendJson(res, 404, { error: 'not_found' });
+      }
+    }
+    if (url.pathname === '/api/agent-md' && method === 'POST') {
+      const body = await this.readBody(req);
+      writeAgentMd(String(body.id ?? ''), String(body.content ?? ''));
+      return this.sendJson(res, 200, { ok: true });
+    }
+    if (url.pathname === '/api/agent' && method === 'POST') {
+      const body = await this.readBody(req);
+      if (typeof body.id === 'string' && body.id) {
+        const updated = updateAgent(body.id, {
+          description: typeof body.description === 'string' ? body.description : undefined,
+          avatar: typeof body.avatar === 'string' ? body.avatar : undefined,
+        });
+        return this.sendJson(res, 200, updated ?? { error: 'not_found' });
+      }
+      const name = String(body.name ?? '').trim();
+      if (!name) return this.sendJson(res, 400, { error: 'missing name' });
+      return this.sendJson(res, 200, createAgent(name, typeof body.description === 'string' ? body.description : ''));
+    }
+    if (url.pathname === '/api/agent-delete' && method === 'POST') {
+      const body = await this.readBody(req);
+      deleteAgent(String(body.id ?? ''));
+      return this.sendJson(res, 200, { ok: true });
+    }
+    // 长期记忆(memory.md)
+    if (url.pathname === '/api/memory' && method === 'GET') {
+      return this.sendJson(res, 200, { content: readMemory(1_000_000) });
+    }
+    if (url.pathname === '/api/memory' && method === 'POST') {
+      const body = await this.readBody(req);
+      writeMemory(String(body.content ?? ''));
+      return this.sendJson(res, 200, { ok: true });
+    }
+    // 全局配置(偏好与配置组)
+    if (url.pathname === '/api/settings' && method === 'GET') {
+      const s = getSettings();
+      return this.sendJson(res, 200, {
+        permissionMode: s.permissionMode,
+        thinking: s.thinking ?? false,
+        modelCurrent: s.modelCurrent ?? null,
+        modelOptions: s.modelOptions ?? [],
+        ttsEnabled: s.ttsEnabled !== false,
+      });
+    }
+    if (url.pathname === '/api/settings' && method === 'POST') {
+      const body = await this.readBody(req);
+      const patch: Record<string, unknown> = {};
+      if (['default', 'auto', 'yolo'].includes(String(body.permissionMode))) patch.permissionMode = body.permissionMode;
+      if (typeof body.thinking === 'boolean') patch.thinking = body.thinking;
+      if (typeof body.modelCurrent === 'string' || body.modelCurrent === null) patch.modelCurrent = body.modelCurrent;
+      const s = saveSettings(patch as Parameters<typeof saveSettings>[0]);
+      recordSignal('remote', `[${device.name}] 全局配置变更:${Object.keys(patch).join(',')}`);
+      return this.sendJson(res, 200, {
+        permissionMode: s.permissionMode,
+        thinking: s.thinking ?? false,
+        modelCurrent: s.modelCurrent ?? null,
+        modelOptions: s.modelOptions ?? [],
+        ttsEnabled: s.ttsEnabled !== false,
+      });
+    }
+
     if (url.pathname === '/api/events' && method === 'GET') {
       const sid = url.searchParams.get('sid');
       res.writeHead(200, {
@@ -662,7 +819,11 @@ export class RemoteBridge {
       }
     }
     const data = fs.readFileSync(file);
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream' });
+    // no-cache:手机端旧 app.js 缓存曾导致「按钮无反应」类陈旧 bug 长期残留(agent-4 联调发现)
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
+      'Cache-Control': 'no-cache',
+    });
     res.end(data);
   }
 }

@@ -22,7 +22,7 @@ import type {
   SessionConfigField,
 } from '../../../shared/types';
 import { createChatPanel, type ChatPanelHandle } from '../../shared/chat-panel';
-import { activePageId } from '../core/nav';
+import { activatePage, activePageId } from '../core/nav';
 import {
   createGroupView,
   openGroupWizard,
@@ -107,6 +107,9 @@ export function initChannelPage(): void {
   const manualCollapse = new Set<string>();
   let inactiveOpen = false;
   let tempOpen = false; // 「临时」区(阅后即焚 session)折叠态
+  // SA 托管标识:tasks.md 里 watch- 前缀 task_id 行含 sid 前 12 位(10s 缓存,解析不到不阻塞)
+  let watchingSids = new Set<string>();
+  let watchingLoadedAt = 0;
   // 「历史归档」组:折叠态 + 窗口化(首 50 条,「显示更多」每次 +100)
   let archiveOpen = false;
   let archiveShown = 50;
@@ -242,6 +245,8 @@ export function initChannelPage(): void {
       try {
         await termView.open(sid); // 打开即 held
       } catch (err) {
+        // 兜底交还:任何阶段失败都不许把 session 锁在「终端接管中」
+        void window.kimi.term.release(sid).catch(() => undefined);
         flashNotice(`终端打开失败：${String(err)}`);
         return;
       }
@@ -631,6 +636,15 @@ export function initChannelPage(): void {
       row.appendChild(badge);
     }
 
+    // SA 托管标识:outline ✦ 角标(与置顶实心 ✦ 区分)
+    if (watchingSids.has(s.id)) {
+      const saBadge = document.createElement('span');
+      saBadge.className = `${P}-sess-sa`;
+      saBadge.textContent = '✦';
+      saBadge.title = 'SA 托管中';
+      row.appendChild(saBadge);
+    }
+
     const name = document.createElement('span');
     name.className = `${P}-sess-name`;
     name.textContent = sessionLabel(s);
@@ -681,6 +695,22 @@ export function initChannelPage(): void {
       });
     }
     items.push({ label: '⚙ 会话配置', onClick: () => void openConfigDrawer(s.id) });
+    // SA 托管:已托管 → 取消;未托管 → 弹 goal 输入后 watchSession
+    items.push({
+      label: watchingSids.has(s.id) ? '✦ 取消托管' : '✦ 托管给 SA',
+      onClick: () => {
+        if (watchingSids.has(s.id)) {
+          void window.kimi.sa.unwatchSession(s.id).then(() =>
+            loadWatching(true).then(() => {
+              flashNotice('已取消托管');
+              return refresh();
+            }),
+          );
+        } else {
+          openWatchGoalModal(s);
+        }
+      },
+    });
     if (!temp) {
       items.push({
         label: '⑂ 分叉(复制完整上下文)',
@@ -715,9 +745,81 @@ export function initChannelPage(): void {
     return items;
   }
 
+  /** 「托管给 SA」的 goal 输入小弹层(可留空) */
+  function openWatchGoalModal(s: ChannelSession): void {
+    const overlay = document.createElement('div');
+    overlay.className = `${P}-goal-overlay`;
+    const card = document.createElement('div');
+    card.className = `${P}-goal-card`;
+    const title = document.createElement('div');
+    title.className = `${P}-goal-title`;
+    title.textContent = `托管「${sessionLabel(s)}」给 SA`;
+    const input = document.createElement('input');
+    input.className = `${P}-goal-input`;
+    input.placeholder = '让 SA 跟进什么？（可留空）';
+    const actions = document.createElement('div');
+    actions.className = `${P}-goal-actions`;
+    const cancel = document.createElement('button');
+    cancel.className = `${P}-btn`;
+    cancel.textContent = '取消';
+    const ok = document.createElement('button');
+    ok.className = `${P}-btn primary`;
+    ok.textContent = '托管';
+    actions.append(cancel, ok);
+    card.append(title, input, actions);
+    overlay.appendChild(card);
+    overlay.onclick = (e) => {
+      if (e.target === overlay) overlay.remove();
+    };
+    cancel.onclick = () => overlay.remove();
+    const submit = () => {
+      const goal = input.value.trim();
+      overlay.remove();
+      void window.kimi.sa
+        .watchSession(s.id, goal ? { goal } : {})
+        .then(() => {
+          flashNotice('已托管，SA 将跟进该 session 的进展');
+          return loadWatching(true).then(refresh);
+        })
+        .catch((err) => flashNotice(`托管失败：${String(err)}`));
+    };
+    ok.onclick = submit;
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') submit();
+      if (e.key === 'Escape') overlay.remove();
+    };
+    page.appendChild(overlay);
+    input.focus();
+  }
+
+  /** SA 工作区组识别:cwd 末段是 .jarvis-workspace/super-agent(稳;dirName/标题会被用户改) */
+  const SA_DIR_SUFFIX = '.jarvis-workspace/super-agent';
+  function isSaProject(p: ChannelProject): boolean {
+    return !!p.cwd && p.cwd.replace(/\\/g, '/').replace(/\/+$/, '').endsWith(SA_DIR_SUFFIX);
+  }
+
+  /** 「✦ Super Agent」特殊入口行:树最上方,点击切 SUPER tab(不开对话视图) */
+  function makeSaEntry(count: number): HTMLElement {
+    const row = document.createElement('button');
+    row.className = `${P}-sa-entry`;
+    const icon = document.createElement('span');
+    icon.className = `${P}-sa-entry-icon`;
+    icon.textContent = '✦';
+    const label = document.createElement('span');
+    label.className = `${P}-sa-entry-name`;
+    label.textContent = 'Super Agent';
+    const badge = document.createElement('span');
+    badge.className = `${P}-sa-entry-count`;
+    badge.textContent = String(count);
+    badge.title = `${count} 个 SA session`;
+    row.append(icon, label, badge);
+    row.title = '打开 SUPER tab(直聊 / 看板 / 回执)';
+    row.onclick = () => activatePage('page-super');
+    return row;
+  }
+
   /** group 树节点:👥 前缀,可置顶(本地存)/选中,排在项目列表最前 */
-  function makeGroupRow(g: GroupRecord): HTMLElement {
-    const row = document.createElement('div');
+  function makeGroupRow(g: GroupRecord): HTMLElement {    const row = document.createElement('div');
     row.className = `${P}-sess ${P}-group` + (g.id === selectedGroupId ? ' on' : '');
     row.dataset.gid = g.id;
 
@@ -867,7 +969,13 @@ export function initChannelPage(): void {
     const unsorted: ChannelProject[] = []; // bucket='unsorted':当普通项目组,排正常项目之后
     const inactive: ChannelProject[] = [];
     const archiveProjects: ChannelProject[] = []; // bucket='archive':永远树底,专属渲染
+    let saCount = 0; // super-agent 项目组的 session 数(汇成特殊入口行)
     for (const p of tree.projects) {
+      // SA 工作区组:不展开为普通 session 列表,汇成「✦ Super Agent」入口行
+      if (isSaProject(p)) {
+        saCount += p.sessions.length;
+        continue;
+      }
       if (p.bucket === 'archive') {
         archiveProjects.push(p);
         continue;
@@ -880,6 +988,7 @@ export function initChannelPage(): void {
       }
       (isInactive(p) ? inactive : active).push(p);
     }
+    if (saCount > 0) treeEl.appendChild(makeSaEntry(saCount));
     for (const p of active) treeEl.appendChild(makeProjectNode(p));
     for (const p of unsorted) treeEl.appendChild(makeProjectNode(p));
 
@@ -1397,6 +1506,29 @@ export function initChannelPage(): void {
   }
 
   // ---------- 数据刷新 ----------
+
+  /** 解析 tasks.md 的 watch- 前缀 task_id 行,匹配含 sid 前 12 位的 session(角标数据源) */
+  async function loadWatching(force = false): Promise<void> {
+    if (!force && Date.now() - watchingLoadedAt < 10_000) return;
+    watchingLoadedAt = Date.now();
+    try {
+      const { content } = await window.kimi.sa.readTasks();
+      const watchLines = content.split('\n').filter((l) => /watch-[\w-]*/i.test(l));
+      const next = new Set<string>();
+      if (tree) {
+        for (const p of tree.projects) {
+          for (const s of p.sessions) {
+            const prefix = s.id.slice(0, 12);
+            if (watchLines.some((l) => l.includes(prefix))) next.add(s.id);
+          }
+        }
+      }
+      watchingSids = next;
+    } catch {
+      /* SA 未就绪则静默,不显示角标(不阻塞 channel 页) */
+    }
+  }
+
   let refreshing = false;
   let refreshQueued = false;
   async function refresh(): Promise<void> {
@@ -1408,6 +1540,7 @@ export function initChannelPage(): void {
     try {
       // scan + groupList 并行;group 树节点(👥)随树一起重渲染
       [tree, groups] = await Promise.all([window.kimi.ch.scan(), window.kimi.ch.groupList()]);
+      await loadWatching(); // 10s 缓存,常规刷新零成本
       renderAll();
       syncHead();
     } finally {
@@ -1589,6 +1722,11 @@ export function initChannelPage(): void {
 
   // ---------- init ----------
   renderNewProj();
+  // SUPER tab 任务详情「在 channel 中打开」:切到本页并选中该 session
+  window.addEventListener('kimi:open-session-in-channel', (e) => {
+    const sid = (e as CustomEvent<string>).detail;
+    if (typeof sid === 'string' && sid) selectSession(sid);
+  });
   // 常驻 agent 缓存:行内标识与「新建 session」选择器用,onChChanged 刷新复用
   void window.kimi.ch.agentList().then((list) => {
     agentList = list;

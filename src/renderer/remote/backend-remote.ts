@@ -23,6 +23,7 @@ export type RemoteSseEvent =
       options?: { optionId: string; name: string; kind: string }[];
     }
   | { type: 'tree-changed' }
+  | { type: 'sa'; saKind: 'inbox' | 'decision' | 'tasks' | 'patrol'; taskId?: string }
   | { type: 'session-mode'; sessionId: string; modeId: string | null }
   | { type: 'session-model'; sessionId: string; model: string }
   | { type: 'session-thinking'; sessionId: string; thinking: string }
@@ -36,14 +37,19 @@ interface SseHandle {
 }
 const SSE_DELAYS = [1000, 2000, 5000, 15000];
 
-function connectSSE(urlFn: () => string, onEvent: (e: RemoteSseEvent) => void, onOpen?: () => void): SseHandle {
+function connectSSE(
+  urlFn: () => string,
+  onEvent: (e: RemoteSseEvent) => void,
+  onOpen?: () => void,
+  onError?: () => void,
+): SseHandle {
   let es: EventSource | null = null;
   let closed = false;
   let attempt = 0;
   let timer = 0;
   function open(): void {
     if (closed) return;
-    es = new EventSource(urlFn()); // 每次(重)连都重新取 URL(token 配对后会变)
+    es = new EventSource(urlFn()); // 每次(重)连都重新取 URL
     es.onopen = () => {
       attempt = 0;
       onOpen?.();
@@ -58,6 +64,7 @@ function connectSSE(urlFn: () => string, onEvent: (e: RemoteSseEvent) => void, o
     es.onerror = () => {
       es?.close();
       es = null;
+      onError?.();
       if (closed) return;
       const delay = SSE_DELAYS[Math.min(attempt, SSE_DELAYS.length - 1)];
       attempt++;
@@ -90,10 +97,18 @@ export interface RemoteHub {
   /** 宿主(moon 模式/状态条)订阅 fan-out;工厂经 backend.on* 走同一事件流 */
   onSessionEvent(cb: (e: RemoteSseEvent) => void): void;
   onGlobalEvent(cb: (e: RemoteSseEvent) => void): void;
-  /** visibility/online/配对成功后立即重连两条通道 */
+  /** visibility/online/boot 时立即重连两条通道 */
   reconnect(): void;
   /** 最近一次 loadSession 适配结果(宿主免二次 open-session 直接同步) */
-  lastLoad: { sid: string; history: { role: 'user' | 'agent'; text: string }[]; live: boolean } | null;
+  lastLoad: {
+    sid: string;
+    history: { role: 'user' | 'agent'; text: string }[];
+    live: boolean;
+    /** live 分支的滚动最近消息(旧→新,≤20;主进程 20261122 新增) */
+    recent?: { role: 'user' | 'agent'; text: string }[];
+    /** live 分支的当前 turn 缓冲(锁屏回连补拉用;桥一直返回,适配器 20261127 起不再丢弃) */
+    buffered?: string[];
+  } | null;
 }
 
 export function createRemoteBackend(opts: {
@@ -101,6 +116,8 @@ export function createRemoteBackend(opts: {
   /** newSession 的 cwd:当前选中 session 的项目目录(无选中时返回 '') */
   getCwd: () => string;
   onUnauthorized: () => void;
+  /** 全局通道连接状态(驱动宿主状态文案,别在各调用点手动设) */
+  onStatus?: (s: 'connected' | 'reconnecting') => void;
 }): RemoteHub {
   const sessionCbs: ((e: RemoteSseEvent) => void)[] = [];
   const globalCbs: ((e: RemoteSseEvent) => void)[] = [];
@@ -150,6 +167,8 @@ export function createRemoteBackend(opts: {
   const globalSse = connectSSE(
     () => `/api/events?token=${encodeURIComponent(opts.token())}`,
     dispatchGlobal,
+    () => opts.onStatus?.('connected'),
+    () => opts.onStatus?.('reconnecting'),
   );
 
   function attachSession(sid: string | null): void {
@@ -221,14 +240,29 @@ export function createRemoteBackend(opts: {
       async loadSession(sid) {
         const r = await post<
           | { mode: 'history'; messages: { role: 'user' | 'agent'; text: string }[] }
-          | { mode: 'live'; buffered: string[] }
+          | {
+              mode: 'live';
+              buffered: string[];
+              /** 滚动最近消息(旧→新,≤20;桥透传,主进程可选新增) */
+              recent?: { role: 'user' | 'agent'; text: string }[];
+            }
           | { mode: 'stale' }
         >('/api/open-session', { sid });
         const meta = { sessionId: sid, title: '', cwd: '', createdAt: 0, updatedAt: 0 };
         if (r.mode === 'stale') throw new Error('stale'); // 调用方(channel 宿主)负责退避重试
         if (r.mode === 'live') {
-          hub.lastLoad = { sid, history: [], live: true };
-          return { meta, history: [], live: true };
+          // recent/buffered 原样透传:工厂 openSession 路径回放 recent 后按 buffered 续流
+          const recent = Array.isArray(r.recent) ? r.recent : [];
+          const buffered = Array.isArray(r.buffered) ? r.buffered : [];
+          hub.lastLoad = { sid, history: [], live: true, recent, buffered };
+          const out: {
+            meta: unknown;
+            history: { role: 'user' | 'agent'; text: string }[];
+            live: boolean;
+            recent: { role: 'user' | 'agent'; text: string }[];
+            buffered: string[];
+          } = { meta, history: [], live: true, recent, buffered };
+          return out;
         }
         hub.lastLoad = { sid, history: r.messages, live: false };
         return { meta, history: r.messages };

@@ -63,6 +63,20 @@ export interface AppSettings {
   remotePort?: number;
   /** 语音转写兜底提供者(P1 占位:仅字段,无实现;/api/asr 一律 501) */
   asrProvider?: 'whisper-api' | 'sensevoice' | null;
+  /** Super Agent(design/design-super-agent.md):默认 SA session */
+  superSessionId?: string;
+  /** 全部 SA session(多开);特权 MCP 工具白名单 */
+  superSessionIds?: string[];
+  /** MCP 调用方鉴权:sa_key → sessionId(URL 携带,跨重启持久) */
+  superSessionKeys?: Record<string, string>;
+  /** SA 工具快照修复迁移标记(v2):已执行 sa_key 回填(resume 会重拉 MCP 工具,不重建 session) */
+  saRebuiltV2?: boolean;
+  /** SA 重建迁移标记(v3):resume 的 mcpServers 只在无存储配置时生效,老 SA 创建时存了无 key URL → 重建默认 SA */
+  saRebuiltV3?: boolean;
+  /** SA cron 巡逻开关(默认开) */
+  saPatrolEnabled?: boolean;
+  /** SA 巡逻间隔分钟(默认 120,合法范围 5~1440) */
+  saPatrolIntervalMin?: number;
 }
 
 export interface PromptImage {
@@ -130,7 +144,12 @@ export interface ChannelProjectRecord {
 /** 统一会话入口 openSession 的返回(design/design-v7.md §3.2:永不 load 忙中 session) */
 export type OpenSessionResult =
   | { mode: 'history'; messages: HistoryItem[] }
-  | { mode: 'live'; buffered: string[] }
+  | {
+      mode: 'live';
+      buffered: string[];
+      /** 滚动最近消息(旧→新,最多 20 条;最后一条可能是当前 turn 进行中的 agent 增量,渲染层接流续写) */
+      recent?: { role: 'user' | 'agent'; text: string }[];
+    }
   | { mode: 'stale' };
 
 /** 常驻 agent(design/design-v7.md §10.2):dir 为绝对路径;AGENTS.md 文件是唯一事实源 */
@@ -180,6 +199,39 @@ export interface RemoteDevice {
   name: string;
   createdAt: number;
   lastSeen: number | null;
+}
+
+/** SA 任务详情(sa:task-detail 返回) */
+export interface SaTaskDetail {
+  task: {
+    taskId: string;
+    goal: string;
+    acceptance: string;
+    status: string;
+    rounds: number;
+    sid: string;
+    createdAt: number;
+    updatedAt: number;
+    lastVerdict: string | null;
+  };
+  receipts: { file: string; at: number; preview: string }[];
+  /** 合成时间线:创建/回执/最近裁决,按时间升序 */
+  timeline: { at: number; text: string }[];
+}
+
+/** SA 结构化看板行(sa:list-tasks 返回) */
+export interface SaTaskItem {
+  taskId: string;
+  sid: string;
+  goal: string;
+  acceptance: string;
+  status: string; // decision | review | in_progress | watching | done
+  rounds: number;
+  createdAt: number;
+  updatedAt: number;
+  lastVerdict: string | null;
+  /** scanner 树里的 session 标题,没有则 sid 前 12 位 */
+  title: string;
 }
 
 // ---- group 协作 (v7.0 P3, design/design-v7.md §4) ----
@@ -455,6 +507,25 @@ export const IPC = {
   rmRegenerateCode: 'rm:regenerate-code',
   rmListDevices: 'rm:list-devices',
   rmRevokeDevice: 'rm:revoke-device',
+  // Super Agent (design/design-super-agent.md)
+  saGetSession: 'sa:get-session',
+  saListSessions: 'sa:list-sessions',
+  saCreateSession: 'sa:create-session',
+  saReadTasks: 'sa:read-tasks',
+  saListInbox: 'sa:list-inbox',
+  saReadInbox: 'sa:read-inbox',
+  saWatchSession: 'sa:watch-session',
+  saUnwatchSession: 'sa:unwatch-session',
+  saGetPatrolConfig: 'sa:get-patrol-config',
+  saSetPatrolConfig: 'sa:set-patrol-config',
+  saRunPatrolNow: 'sa:run-patrol-now',
+  saListDecisions: 'sa:list-decisions',
+  saReviewTask: 'sa:review-task',
+  saTaskDetail: 'sa:task-detail',
+  saListTasks: 'sa:list-tasks',
+  saReadFile: 'sa:read-file',
+  saWriteFile: 'sa:write-file',
+  evSaEvent: 'sa:event',
   // 终端三视图 (v7.0 P3b, design/design-v7.md §12)
   termOpen: 'term:open',
   termInput: 'term:input',
